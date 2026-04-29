@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.env
+config.json
+daily_pulse.log
+digest.txt
+build/
+dist/
+*.spec

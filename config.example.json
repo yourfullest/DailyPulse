@@ -1,0 +1,71 @@
+{
+  "title": "DailyPulse 个人信息简报",
+  "summary_words": 450,
+  "max_items_per_source": 5,
+  "max_total_items": 30,
+  "include_fetch_errors": true,
+  "schedule": {
+    "time": "08:00"
+  },
+  "ai": {
+    "endpoint": "https://api.openai.com/v1/chat/completions",
+    "model": "gpt-4o-mini",
+    "api_key_env": "OPENAI_API_KEY",
+    "temperature": 0.2,
+    "max_context_chars": 12000
+  },
+  "sources": [
+    {
+      "name": "少数派",
+      "type": "rss",
+      "url": "https://sspai.com/feed",
+      "limit": 5
+    },
+    {
+      "name": "BBC News 中文",
+      "type": "rss",
+      "url": "https://feeds.bbci.co.uk/zhongwen/simp/rss.xml",
+      "limit": 3
+    },
+    {
+      "name": "OpenAI Blog",
+      "type": "rss",
+      "url": "https://openai.com/news/rss.xml",
+      "limit": 3
+    },
+    {
+      "name": "公开网页示例",
+      "type": "web",
+      "url": "https://example.com",
+      "limit": 1
+    }
+  ],
+  "delivery": {
+    "email": {
+      "enabled": false,
+      "smtp_host": "smtp.gmail.com",
+      "smtp_port": 465,
+      "username_env": "SMTP_USERNAME",
+      "password_env": "SMTP_PASSWORD",
+      "from": "you@example.com",
+      "to": [
+        "you@example.com"
+      ]
+    },
+    "telegram": {
+      "enabled": false,
+      "token_env": "TELEGRAM_BOT_TOKEN",
+      "chat_id_env": "TELEGRAM_CHAT_ID"
+    },
+    "webhook": {
+      "enabled": false,
+      "url_env": "WEBHOOK_URL",
+      "payload": {
+        "msgtype": "text",
+        "text": {
+          "content": "${body}"
+        }
+      }
+    }
+  }
+}
