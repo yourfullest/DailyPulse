@@ -2,13 +2,13 @@
 
 English | [中文](README.zh-CN.md)
 
-DailyPulse is a personal AI briefing generator. It fetches RSS feeds, public web pages, blogs, WeChat article links, and RSSHub feeds for platforms such as Xiaohongshu or X, summarizes them with DeepSeek or any OpenAI-compatible API, and delivers the digest by email, Telegram, or webhook.
+DailyPulse is a personal AI briefing generator. It fetches RSS feeds, public web pages, blogs, WeChat article links, and RSSHub feeds for platforms such as Xiaohongshu or X, summarizes them with an OpenAI-compatible API, and delivers the digest by email, Telegram, or webhook. DeepSeek is included as an example provider.
 
 ## Features
 
 - Desktop GUI for managing sources, API keys, and delivery channels.
 - Supports `rss` and `web` sources.
-- Supports DeepSeek and OpenAI-compatible Chat Completions APIs.
+- Supports multiple OpenAI-compatible Chat Completions APIs, such as DeepSeek, OpenAI, or other compatible providers.
 - Sends digests by email, Telegram Bot, or generic webhook.
 - Can run from source or be packaged as a macOS `.dmg` and Windows `.exe`.
 
@@ -21,7 +21,7 @@ Download from GitHub Releases:
 
 First run:
 
-1. Enter your DeepSeek API key.
+1. Enter your API key. The example configuration uses DeepSeek.
 2. Add RSS, web page, or RSSHub sources.
 3. Click Preview Digest.
 4. Configure email, Telegram, or webhook delivery if needed.
@@ -62,15 +62,27 @@ cp .env.example .env
 python3 daily_pulse.py --once --dry-run -c config.json
 ```
 
-## DeepSeek Setup
+## API Setup
 
-Add your key to `.env`:
+DailyPulse supports OpenAI-compatible Chat Completions APIs. You can switch providers in `config.json`:
+
+```json
+"ai": {
+  "endpoint": "https://api.example.com/v1/chat/completions",
+  "model": "your-model-name",
+  "api_key_env": "YOUR_API_KEY_ENV"
+}
+```
+
+### DeepSeek Example
+
+If you use DeepSeek, add your key to `.env`:
 
 ```bash
 DEEPSEEK_API_KEY=your_deepseek_api_key
 ```
 
-Important `config.json` fields:
+Example `config.json` fields:
 
 ```json
 "ai": {
@@ -162,4 +174,3 @@ git push origin v0.1.0
 ## Security
 
 Do not commit `.env` or `config.json`. They contain local API keys, webhook URLs, and personal sources, and are already excluded by `.gitignore`.
-

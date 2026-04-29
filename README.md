@@ -1,8 +1,8 @@
 # DailyPulse
 
-Personal AI briefing generator. Fetch RSS feeds, public pages, blogs, WeChat article links, Xiaohongshu/X via RSSHub, summarize them with an OpenAI-compatible API such as DeepSeek, and send the digest by email, Telegram, or webhook.
+Personal AI briefing generator. Fetch RSS feeds, public pages, blogs, WeChat article links, and Xiaohongshu/X via RSSHub, summarize them with an OpenAI-compatible API, and send the digest by email, Telegram, or webhook. DeepSeek is included as an example provider.
 
-个人 AI 信息简报生成器。抓取 RSS、公开网页、博客、微信公众号文章链接、小红书/X 的 RSSHub 源，用 DeepSeek 等 OpenAI 兼容 API 生成摘要，并通过邮件、Telegram 或 Webhook 推送。
+个人 AI 信息简报生成器。抓取 RSS、公开网页、博客、微信公众号文章链接、小红书/X 的 RSSHub 源，使用 OpenAI 兼容 API 生成摘要，并通过邮件、Telegram 或 Webhook 推送。DeepSeek 只是示例服务商之一。
 
 ## Language
 
@@ -35,3 +35,6 @@ cp .env.example .env
 python3 daily_pulse.py --once --dry-run -c config.json
 ```
 
+You can switch the API provider by editing `endpoint`, `model`, and `api_key_env` in `config.json`.
+
+你可以通过修改 `config.json` 中的 `endpoint`、`model` 和 `api_key_env` 切换不同 API 服务商。

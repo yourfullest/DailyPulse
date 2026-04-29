@@ -12,7 +12,7 @@
 使用：
 
 1. 打开 DailyPulse。
-2. 填写 DeepSeek 或 OpenAI 兼容 API Key。
+2. 填写 OpenAI 兼容 API Key；DeepSeek 可作为示例服务商。
 3. 添加 RSS、网页或 RSSHub 信息源。
 4. 点击“预览简报”查看效果。
 5. 配置邮件、Telegram 或 Webhook 后点击“发送一次”。
