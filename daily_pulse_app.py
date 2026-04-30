@@ -12,9 +12,13 @@ import datetime as dt
 import json
 import os
 import queue
+import re
 import sys
 import threading
 import tkinter as tk
+import urllib.error
+import urllib.request
+import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 from typing import Any, Callable
@@ -23,6 +27,9 @@ import daily_pulse
 
 
 APP_NAME = "DailyPulse"
+APP_VERSION = "0.1.4"
+UPDATE_API_URL = "https://api.github.com/repos/yourfullest/DailyPulse/releases/latest"
+UPDATE_PAGE_URL = "https://github.com/yourfullest/DailyPulse/releases/latest"
 IS_BUNDLED = bool(getattr(sys, "frozen", False))
 SOURCE_ROOT = Path(__file__).resolve().parent
 RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", SOURCE_ROOT))
@@ -54,6 +61,43 @@ ACCENT = "#2563eb"
 ACCENT_DARK = "#1d4ed8"
 TEAL = "#0f766e"
 CORAL = "#f9735b"
+
+
+def parse_version(value: str) -> tuple[int, ...]:
+    match = re.search(r"(\d+(?:\.\d+)*)", value)
+    if not match:
+        return (0,)
+    return tuple(int(part) for part in match.group(1).split("."))
+
+
+def is_newer_version(candidate: str, current: str = APP_VERSION) -> bool:
+    candidate_parts = list(parse_version(candidate))
+    current_parts = list(parse_version(current))
+    width = max(len(candidate_parts), len(current_parts))
+    candidate_parts.extend([0] * (width - len(candidate_parts)))
+    current_parts.extend([0] * (width - len(current_parts)))
+    return candidate_parts > current_parts
+
+
+def fetch_latest_release(timeout: int = 8) -> dict[str, str] | None:
+    req = urllib.request.Request(
+        UPDATE_API_URL,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": f"{APP_NAME}/{APP_VERSION}",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout, context=daily_pulse.ssl_context()) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    tag_name = str(data.get("tag_name", "")).strip()
+    if not tag_name or data.get("draft") or data.get("prerelease"):
+        return None
+    return {
+        "tag_name": tag_name,
+        "name": str(data.get("name") or tag_name),
+        "html_url": str(data.get("html_url") or UPDATE_PAGE_URL),
+    }
 
 
 def read_env(path: Path = ENV_PATH) -> dict[str, str]:
@@ -529,6 +573,10 @@ class DailyPulseApp(tk.Tk):
         self.header_icon: tk.PhotoImage | None = None
         self.source_count_var = tk.StringVar(value="0 个来源")
         self.model_badge_var = tk.StringVar(value="模型未配置")
+        self.sources_expanded_var = tk.BooleanVar(value=False)
+        self.settings_expanded_var = tk.BooleanVar(value=False)
+        self.sources_toggle_var = tk.StringVar(value="展开信息源")
+        self.settings_toggle_var = tk.StringVar(value="展开配置")
 
         self._load_window_icon()
         self._configure_style()
@@ -536,6 +584,7 @@ class DailyPulseApp(tk.Tk):
         self._load_fields()
         self._refresh_sources()
         self._poll_worker_queue()
+        self.after(1200, self.check_for_updates)
 
     def _load_window_icon(self) -> None:
         if not APP_ICON_PNG.exists():
@@ -604,11 +653,10 @@ class DailyPulseApp(tk.Tk):
         root = ttk.Frame(self, padding=18)
         root.pack(fill="both", expand=True)
         root.columnconfigure(0, weight=1)
-        root.columnconfigure(1, weight=1)
-        root.rowconfigure(1, weight=1)
+        root.rowconfigure(2, weight=1)
 
         header = ttk.Frame(root, style="Hero.TFrame")
-        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 16))
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 12))
         header.columnconfigure(1, weight=1)
         if self.header_icon:
             ttk.Label(header, image=self.header_icon, background=BG).grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 12))
@@ -619,13 +667,39 @@ class DailyPulseApp(tk.Tk):
         ttk.Label(header, textvariable=self.source_count_var, style="Count.TLabel").grid(row=0, column=2, sticky="e", padx=(8, 0))
         ttk.Label(header, textvariable=self.model_badge_var, style="Badge.TLabel").grid(row=0, column=3, sticky="e", padx=(8, 0))
 
-        sources_box = ttk.LabelFrame(root, text="信息源", padding=10)
-        sources_box.grid(row=1, column=0, sticky="nsew", padx=(0, 8))
-        sources_box.rowconfigure(0, weight=1)
-        sources_box.columnconfigure(0, weight=1)
+        controls_box = ttk.LabelFrame(root, text="控制台", padding=10)
+        controls_box.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        controls_box.columnconfigure(0, weight=1)
+
+        control_bar = ttk.Frame(controls_box, style="Surface.TFrame")
+        control_bar.grid(row=0, column=0, sticky="ew")
+        control_bar.columnconfigure(7, weight=1)
+
+        ttk.Button(
+            control_bar,
+            textvariable=self.sources_toggle_var,
+            command=self.toggle_sources_panel,
+            style="Secondary.TButton",
+        ).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(
+            control_bar,
+            textvariable=self.settings_toggle_var,
+            command=self.toggle_settings_panel,
+            style="Secondary.TButton",
+        ).grid(row=0, column=1, padx=(0, 14))
+        ttk.Button(control_bar, text="保存", command=self.save_all, style="Secondary.TButton").grid(row=0, column=2, padx=(0, 8))
+        ttk.Button(control_bar, text="预览", style="Accent.TButton", command=self.preview_digest).grid(row=0, column=3, padx=(0, 8))
+        ttk.Button(control_bar, text="发送", command=self.send_digest, style="Secondary.TButton").grid(row=0, column=4, padx=(0, 8))
+        ttk.Button(control_bar, text="存文件", command=self.save_digest_file, style="Secondary.TButton").grid(row=0, column=5, padx=(0, 8))
+        ttk.Button(control_bar, text="启动定时", command=self.start_timer, style="Secondary.TButton").grid(row=0, column=6, padx=(0, 8))
+        ttk.Button(control_bar, text="停止定时", command=self.stop_timer, style="Secondary.TButton").grid(row=0, column=7, sticky="w")
+
+        self.sources_panel = ttk.Frame(controls_box, style="Surface.TFrame")
+        self.sources_panel.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        self.sources_panel.columnconfigure(0, weight=1)
 
         columns = ("name", "type", "limit", "url")
-        self.source_tree = ttk.Treeview(sources_box, columns=columns, show="headings", selectmode="browse")
+        self.source_tree = ttk.Treeview(self.sources_panel, columns=columns, show="headings", selectmode="browse", height=5)
         self.source_tree.heading("name", text="名称")
         self.source_tree.heading("type", text="类型")
         self.source_tree.heading("limit", text="条数")
@@ -634,14 +708,14 @@ class DailyPulseApp(tk.Tk):
         self.source_tree.column("type", width=70, minwidth=60, anchor="center")
         self.source_tree.column("limit", width=58, minwidth=50, anchor="center")
         self.source_tree.column("url", width=360, minwidth=240)
-        self.source_tree.grid(row=0, column=0, sticky="nsew")
+        self.source_tree.grid(row=0, column=0, sticky="ew")
         self.source_tree.bind("<Double-1>", lambda _event: self.edit_source())
 
-        source_scroll = ttk.Scrollbar(sources_box, orient="vertical", command=self.source_tree.yview)
+        source_scroll = ttk.Scrollbar(self.sources_panel, orient="vertical", command=self.source_tree.yview)
         source_scroll.grid(row=0, column=1, sticky="ns")
         self.source_tree.configure(yscrollcommand=source_scroll.set)
 
-        source_buttons = ttk.Frame(sources_box)
+        source_buttons = ttk.Frame(self.sources_panel, style="Surface.TFrame")
         source_buttons.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         for idx, (text, command) in enumerate(
             [
@@ -654,9 +728,10 @@ class DailyPulseApp(tk.Tk):
         ):
             ttk.Button(source_buttons, text=text, command=command, style="Secondary.TButton").grid(row=0, column=idx, padx=(0, 8))
 
-        settings_box = ttk.LabelFrame(root, text="API 与发送", padding=12)
-        settings_box.grid(row=1, column=1, sticky="nsew", padx=(8, 0))
-        settings_box.columnconfigure(1, weight=1)
+        self.settings_panel = ttk.Frame(controls_box, style="Surface.TFrame")
+        self.settings_panel.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        self.settings_panel.columnconfigure(1, weight=1)
+        self.settings_panel.columnconfigure(3, weight=1)
 
         self.title_var = tk.StringVar()
         self.words_var = tk.StringVar()
@@ -671,22 +746,29 @@ class DailyPulseApp(tk.Tk):
         self.webhook_enabled_var = tk.BooleanVar()
 
         settings = [
-            ("标题", ttk.Entry(settings_box, textvariable=self.title_var)),
-            ("摘要字数", ttk.Entry(settings_box, textvariable=self.words_var)),
-            ("总条数上限", ttk.Entry(settings_box, textvariable=self.max_items_var)),
-            ("每日时间", ttk.Entry(settings_box, textvariable=self.schedule_var)),
-            ("AI Endpoint", ttk.Entry(settings_box, textvariable=self.endpoint_var)),
-            ("AI Model", ttk.Entry(settings_box, textvariable=self.model_var)),
-            ("密钥变量名", ttk.Entry(settings_box, textvariable=self.api_key_env_var)),
-            ("API Key", ttk.Entry(settings_box, textvariable=self.api_key_var, show="*")),
+            ("标题", ttk.Entry(self.settings_panel, textvariable=self.title_var)),
+            ("摘要字数", ttk.Entry(self.settings_panel, textvariable=self.words_var)),
+            ("总条数上限", ttk.Entry(self.settings_panel, textvariable=self.max_items_var)),
+            ("每日时间", ttk.Entry(self.settings_panel, textvariable=self.schedule_var)),
+            ("AI Endpoint", ttk.Entry(self.settings_panel, textvariable=self.endpoint_var)),
+            ("AI Model", ttk.Entry(self.settings_panel, textvariable=self.model_var)),
+            ("密钥变量名", ttk.Entry(self.settings_panel, textvariable=self.api_key_env_var)),
+            ("API Key", ttk.Entry(self.settings_panel, textvariable=self.api_key_var, show="*")),
         ]
-        for row, (label, widget) in enumerate(settings):
-            ttk.Label(settings_box, text=label).grid(row=row, column=0, sticky="w", padx=(0, 10), pady=5)
-            widget.grid(row=row, column=1, sticky="ew", pady=5)
+        for idx, (label, widget) in enumerate(settings):
+            row = idx // 2
+            col = (idx % 2) * 2
+            ttk.Label(self.settings_panel, text=label, style="Surface.TLabel").grid(
+                row=row, column=col, sticky="w", padx=(0, 10), pady=5
+            )
+            widget.grid(row=row, column=col + 1, sticky="ew", padx=(0, 18), pady=5)
 
-        ttk.Label(settings_box, text="发送渠道").grid(row=len(settings), column=0, sticky="w", padx=(0, 10), pady=(12, 5))
-        delivery_row = ttk.Frame(settings_box)
-        delivery_row.grid(row=len(settings), column=1, sticky="w", pady=(12, 5))
+        delivery_row_index = (len(settings) + 1) // 2
+        ttk.Label(self.settings_panel, text="发送渠道", style="Surface.TLabel").grid(
+            row=delivery_row_index, column=0, sticky="w", padx=(0, 10), pady=(12, 5)
+        )
+        delivery_row = ttk.Frame(self.settings_panel, style="Surface.TFrame")
+        delivery_row.grid(row=delivery_row_index, column=1, columnspan=3, sticky="w", pady=(12, 5))
         ttk.Checkbutton(delivery_row, text="邮件", variable=self.email_enabled_var).grid(row=0, column=0, padx=(0, 12))
         ttk.Checkbutton(delivery_row, text="Telegram", variable=self.telegram_enabled_var).grid(row=0, column=1, padx=(0, 12))
         ttk.Checkbutton(delivery_row, text="Webhook", variable=self.webhook_enabled_var).grid(row=0, column=2, padx=(0, 12))
@@ -694,23 +776,10 @@ class DailyPulseApp(tk.Tk):
             row=0, column=3
         )
 
-        action_row = ttk.Frame(settings_box)
-        action_row.grid(row=len(settings) + 1, column=0, columnspan=2, sticky="ew", pady=(16, 0))
-        ttk.Button(action_row, text="保存配置", command=self.save_all, style="Secondary.TButton").grid(row=0, column=0, padx=(0, 8))
-        ttk.Button(action_row, text="预览简报", style="Accent.TButton", command=self.preview_digest).grid(row=0, column=1, padx=(0, 8))
-        ttk.Button(action_row, text="发送一次", command=self.send_digest, style="Secondary.TButton").grid(row=0, column=2, padx=(0, 8))
-        ttk.Button(action_row, text="保存为文件", command=self.save_digest_file, style="Secondary.TButton").grid(row=0, column=3)
-
-        timer_row = ttk.Frame(settings_box)
-        timer_row.grid(row=len(settings) + 2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
-        ttk.Button(timer_row, text="启动 App 内定时", command=self.start_timer, style="Secondary.TButton").grid(row=0, column=0, padx=(0, 8))
-        ttk.Button(timer_row, text="停止定时", command=self.stop_timer, style="Secondary.TButton").grid(row=0, column=1)
-
         output_box = ttk.LabelFrame(root, text="简报预览", padding=10)
-        output_box.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(14, 0))
+        output_box.grid(row=2, column=0, sticky="nsew")
         output_box.rowconfigure(0, weight=1)
         output_box.columnconfigure(0, weight=1)
-        root.rowconfigure(2, weight=2)
 
         output_font = "Consolas" if sys.platform.startswith("win") else "Menlo"
         self.output = scrolledtext.ScrolledText(
@@ -730,7 +799,34 @@ class DailyPulseApp(tk.Tk):
 
         self.status_var = tk.StringVar(value="就绪")
         self.status = ttk.Label(root, textvariable=self.status_var, style="Status.TLabel")
-        self.status.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        self.status.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        self.apply_panel_visibility()
+
+    def update_toggle_labels(self) -> None:
+        source_marker = "-" if self.sources_expanded_var.get() else "+"
+        settings_marker = "-" if self.settings_expanded_var.get() else "+"
+        self.sources_toggle_var.set(f"{source_marker} 信息源 ({len(self.sources)})")
+        self.settings_toggle_var.set(f"{settings_marker} 配置")
+
+    def apply_panel_visibility(self) -> None:
+        if self.sources_expanded_var.get():
+            self.sources_panel.grid()
+        else:
+            self.sources_panel.grid_remove()
+
+        if self.settings_expanded_var.get():
+            self.settings_panel.grid()
+        else:
+            self.settings_panel.grid_remove()
+        self.update_toggle_labels()
+
+    def toggle_sources_panel(self) -> None:
+        self.sources_expanded_var.set(not self.sources_expanded_var.get())
+        self.apply_panel_visibility()
+
+    def toggle_settings_panel(self) -> None:
+        self.settings_expanded_var.set(not self.settings_expanded_var.get())
+        self.apply_panel_visibility()
 
     def _load_fields(self) -> None:
         ai = self.config_data.get("ai", {})
@@ -765,6 +861,7 @@ class DailyPulseApp(tk.Tk):
                 ),
             )
         self.source_count_var.set(f"{len(self.sources)} 个来源")
+        self.update_toggle_labels()
 
     def selected_source_index(self) -> int | None:
         selection = self.source_tree.selection()
@@ -923,6 +1020,30 @@ class DailyPulseApp(tk.Tk):
             self.set_status("运行失败。")
             messagebox.showerror("运行失败", str(payload), parent=self)
         self.after(150, self._poll_worker_queue)
+
+    def check_for_updates(self) -> None:
+        def worker() -> None:
+            try:
+                release = fetch_latest_release()
+            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+                return
+            if not release or not is_newer_version(release["tag_name"]):
+                return
+            self.after(0, lambda: self.prompt_for_update(release))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def prompt_for_update(self, release: dict[str, str]) -> None:
+        latest = release["tag_name"]
+        url = release.get("html_url") or UPDATE_PAGE_URL
+        should_open = messagebox.askyesno(
+            "发现新版本",
+            f"DailyPulse 有新版本 {latest} 可用。\n\n当前版本：v{APP_VERSION}\n是否打开下载页面？",
+            parent=self,
+        )
+        if should_open:
+            webbrowser.open(url)
+            self.set_status(f"已打开 {latest} 下载页面。")
 
     def generate_digest(self) -> str:
         config = self.build_config_from_fields()

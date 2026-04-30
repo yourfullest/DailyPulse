@@ -4,6 +4,7 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
+from daily_pulse_app import is_newer_version, parse_version
 from daily_pulse import Item, Source, build_digest, collect_items, parse_rss, substitute_body
 
 
@@ -78,6 +79,13 @@ class DailyPulseTests(unittest.TestCase):
         self.assertIn("AI 摘要未使用", digest)
         self.assertIn("AI 请求失败", digest)
         self.assertIn("Hello", digest)
+
+    def test_update_version_comparison(self):
+        self.assertEqual(parse_version("v0.1.10"), (0, 1, 10))
+        self.assertTrue(is_newer_version("v0.1.10", "0.1.3"))
+        self.assertTrue(is_newer_version("v0.2.0", "0.1.99"))
+        self.assertFalse(is_newer_version("v0.1.3", "0.1.3"))
+        self.assertFalse(is_newer_version("v0.1.2", "0.1.3"))
 
 
 if __name__ == "__main__":
