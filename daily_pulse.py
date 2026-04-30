@@ -29,9 +29,20 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any, Iterable
 
+try:
+    import certifi
+except ImportError:  # pragma: no cover - optional runtime dependency.
+    certifi = None
+
 
 USER_AGENT = "DailyPulse/1.0 (+https://localhost)"
 DEFAULT_TIMEOUT = 20
+
+
+def ssl_context() -> ssl.SSLContext:
+    if certifi is not None:
+        return ssl.create_default_context(cafile=certifi.where())
+    return ssl.create_default_context()
 
 
 @dataclass
@@ -120,7 +131,7 @@ def request_text(url: str, timeout: int = DEFAULT_TIMEOUT) -> str:
             "Accept": "text/html,application/rss+xml,application/xml;q=0.9,*/*;q=0.8",
         },
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout, context=ssl_context()) as resp:
         charset = resp.headers.get_content_charset() or "utf-8"
         return resp.read().decode(charset, errors="replace")
 
@@ -293,7 +304,7 @@ def call_ai_summary(config: dict[str, Any], items: list[Item]) -> str | None:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=int(ai_config.get("timeout", 60))) as resp:
+        with urllib.request.urlopen(req, timeout=int(ai_config.get("timeout", 60)), context=ssl_context()) as resp:
             body = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         print(f"[warn] AI 摘要失败，改用本地摘要: {exc}", file=sys.stderr)
@@ -365,12 +376,12 @@ def send_email(config: dict[str, Any], subject: str, body: str) -> None:
     msg.set_content(body)
 
     if port == 465:
-        with smtplib.SMTP_SSL(host, port, context=ssl.create_default_context()) as smtp:
+        with smtplib.SMTP_SSL(host, port, context=ssl_context()) as smtp:
             smtp.login(username, password)
             smtp.send_message(msg)
     else:
         with smtplib.SMTP(host, port) as smtp:
-            smtp.starttls(context=ssl.create_default_context())
+            smtp.starttls(context=ssl_context())
             smtp.login(username, password)
             smtp.send_message(msg)
 
@@ -383,7 +394,7 @@ def post_json(url: str, payload: dict[str, Any], timeout: int = DEFAULT_TIMEOUT)
         headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout, context=ssl_context()) as resp:
         resp.read()
 
 
