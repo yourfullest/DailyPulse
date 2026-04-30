@@ -63,6 +63,13 @@ class Item:
     excerpt: str = ""
 
 
+@dataclass
+class SourceFetchResult:
+    source: Source
+    items: list[Item]
+    error: str | None = None
+
+
 class TextExtractor(HTMLParser):
     """Small HTML text extractor for public pages."""
 
@@ -260,6 +267,17 @@ def brief_context(items: list[Item], max_chars: int) -> str:
     return truncate("\n\n".join(blocks), max_chars)
 
 
+def summary_style_instruction(config: dict[str, Any]) -> str:
+    style = str(config.get("summary_style", "standard")).lower()
+    styles = {
+        "brief": "请写得更简洁，优先保留关键事实和最值得注意的变化。",
+        "standard": "请使用稳定结构：今日重点、值得关注、风险/变化、可能需要跟进、消息源。",
+        "deep": "请写得更深入，补充趋势判断、背景联系和需要持续观察的问题。",
+        "action": "请突出可执行事项，把我可能需要跟进的动作单独列出。",
+    }
+    return styles.get(style, styles["standard"])
+
+
 def describe_http_error(exc: urllib.error.HTTPError) -> str:
     detail = ""
     try:
@@ -296,6 +314,7 @@ def attempt_ai_summary(config: dict[str, Any], items: list[Item]) -> tuple[str |
             {
                 "role": "user",
                 "content": (
+                    f"{summary_style_instruction(config)}\n"
                     f"请基于以下来源生成约 {target_words} 字中文简报，并在文末保留"
                     "一个“消息源”小节，列出编号、标题、来源和链接。\n\n"
                     + brief_context(items, max_context_chars)
@@ -343,14 +362,15 @@ def call_ai_summary(config: dict[str, Any], items: list[Item]) -> str | None:
 def fallback_summary(config: dict[str, Any], items: list[Item], reason: str | None = None) -> str:
     target_words = int(config.get("summary_words", 450))
     max_items = int(config.get("fallback_item_count", 8))
+    lines = [f"今日重点\n今日共抓取 {len(items)} 条信息。"]
     if reason:
-        intro = f"今日共抓取 {len(items)} 条信息。AI 摘要未使用（{reason}），以下为本地提取式简报："
-    else:
-        intro = f"今日共抓取 {len(items)} 条信息。以下为本地提取式简报："
-    lines = [intro]
+        lines.append(f"AI 摘要未使用（{reason}），以下为本地提取式简报。")
+
+    lines.append("\n值得关注")
     for item in items[:max_items]:
         excerpt = truncate(item.excerpt, 180)
         lines.append(f"- {item.source}：《{item.title}》。{excerpt}")
+    lines.append("\n可能需要跟进\n- 打开文末消息源，查看与工作或兴趣高度相关的原文。")
 
     body = "\n".join(lines)
     if len(body) > target_words * 2:
@@ -473,13 +493,12 @@ def send_digest(config: dict[str, Any], body: str) -> None:
     send_webhook(config, body)
 
 
-def collect_items(config: dict[str, Any]) -> tuple[list[Item], list[str]]:
+def collect_source_results(config: dict[str, Any]) -> list[SourceFetchResult]:
     sources = parse_sources(config)
     if not sources:
-        return [], []
+        return []
 
-    results: list[list[Item]] = [[] for _source in sources]
-    errors: list[str] = []
+    results: list[SourceFetchResult | None] = [None for _source in sources]
 
     max_workers = max(1, min(int(config.get("fetch_workers", 8)), len(sources)))
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -490,11 +509,21 @@ def collect_items(config: dict[str, Any]) -> tuple[list[Item], list[str]]:
                 source_items, error = future.result()
             except Exception as exc:
                 source_items, error = [], f"{source.name}: {exc}"
-            results[idx] = source_items
-            if error:
-                errors.append(error)
+            results[idx] = SourceFetchResult(source=source, items=source_items, error=error)
 
-    items = [item for source_items in results for item in source_items]
+    return [result for result in results if result is not None]
+
+
+def collect_items(config: dict[str, Any]) -> tuple[list[Item], list[str]]:
+    results = collect_source_results(config)
+    errors: list[str] = []
+    items: list[Item] = []
+
+    for result in results:
+        items.extend(result.items)
+        if result.error:
+            errors.append(result.error)
+
     max_total = int(config.get("max_total_items", 30))
     return items[:max_total], errors
 

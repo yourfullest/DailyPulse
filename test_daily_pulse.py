@@ -5,7 +5,16 @@ import urllib.error
 from unittest.mock import patch
 
 from daily_pulse_app import is_newer_version, parse_version
-from daily_pulse import Item, Source, build_digest, collect_items, parse_rss, substitute_body
+from daily_pulse import (
+    Item,
+    Source,
+    build_digest,
+    collect_items,
+    collect_source_results,
+    parse_rss,
+    substitute_body,
+    summary_style_instruction,
+)
 
 
 class DailyPulseTests(unittest.TestCase):
@@ -60,6 +69,27 @@ class DailyPulseTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual([item.source for item in items], ["Slow", "Fast"])
 
+    def test_collect_source_results_reports_empty_and_error_states(self):
+        config = {
+            "sources": [
+                {"name": "Empty", "url": "https://example.com/empty", "type": "rss"},
+                {"name": "Broken", "url": "https://example.com/broken", "type": "rss"},
+            ],
+        }
+
+        def fake_fetch(source):
+            if source.name == "Broken":
+                return [], "Broken: timeout"
+            return [], None
+
+        with patch("daily_pulse.fetch_source", side_effect=fake_fetch):
+            results = collect_source_results(config)
+
+        self.assertEqual([result.source.name for result in results], ["Empty", "Broken"])
+        self.assertEqual(results[0].items, [])
+        self.assertIsNone(results[0].error)
+        self.assertEqual(results[1].error, "Broken: timeout")
+
     def test_build_digest_explains_ai_request_failures(self):
         config = {
             "title": "Test Pulse",
@@ -86,6 +116,10 @@ class DailyPulseTests(unittest.TestCase):
         self.assertTrue(is_newer_version("v0.2.0", "0.1.99"))
         self.assertFalse(is_newer_version("v0.1.3", "0.1.3"))
         self.assertFalse(is_newer_version("v0.1.2", "0.1.3"))
+
+    def test_summary_style_instruction(self):
+        self.assertIn("简洁", summary_style_instruction({"summary_style": "brief"}))
+        self.assertIn("可执行事项", summary_style_instruction({"summary_style": "action"}))
 
 
 if __name__ == "__main__":

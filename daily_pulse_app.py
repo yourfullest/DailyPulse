@@ -27,7 +27,7 @@ import daily_pulse
 
 
 APP_NAME = "DailyPulse"
-APP_VERSION = "0.1.5"
+APP_VERSION = "0.1.6"
 UPDATE_API_URL = "https://api.github.com/repos/yourfullest/DailyPulse/releases/latest"
 UPDATE_PAGE_URL = "https://github.com/yourfullest/DailyPulse/releases/latest"
 IS_BUNDLED = bool(getattr(sys, "frozen", False))
@@ -48,6 +48,7 @@ def user_data_dir() -> Path:
 APP_DATA_DIR = user_data_dir() if IS_BUNDLED else SOURCE_ROOT
 CONFIG_PATH = APP_DATA_DIR / "config.json"
 ENV_PATH = APP_DATA_DIR / ".env"
+HISTORY_DIR = APP_DATA_DIR / "history"
 ASSET_ROOT = RESOURCE_ROOT / "assets"
 APP_ICON_PNG = ASSET_ROOT / "DailyPulse.png"
 
@@ -153,6 +154,7 @@ def load_config() -> dict[str, Any]:
     return {
         "title": "DailyPulse 个人信息简报",
         "summary_words": 450,
+        "summary_style": "standard",
         "max_total_items": 30,
         "schedule": {"time": "08:00"},
         "ai": {
@@ -559,6 +561,73 @@ class DeliveryDialog(simpledialog.Dialog):
         self.run_test("Webhook", worker)
 
 
+class HistoryWindow(tk.Toplevel):
+    def __init__(self, parent: "DailyPulseApp", files: list[Path]):
+        super().__init__(parent)
+        self.parent_app = parent
+        self.files = files
+        self.title("历史简报")
+        self.geometry("820x520")
+        self.minsize(680, 420)
+        self.configure(bg=BG)
+
+        root = ttk.Frame(self, padding=12)
+        root.pack(fill="both", expand=True)
+        root.columnconfigure(1, weight=1)
+        root.rowconfigure(0, weight=1)
+
+        self.listbox = tk.Listbox(root, width=28, activestyle="dotbox", exportselection=False)
+        self.listbox.grid(row=0, column=0, sticky="ns", padx=(0, 10))
+        for path in files:
+            self.listbox.insert("end", path.stem.replace("daily-pulse-", ""))
+        self.listbox.bind("<<ListboxSelect>>", lambda _event: self.load_selected_preview())
+
+        self.preview = scrolledtext.ScrolledText(
+            root,
+            wrap="word",
+            height=14,
+            background=OUTPUT_BG,
+            foreground=TEXT,
+            padx=12,
+            pady=12,
+            relief="flat",
+            borderwidth=0,
+        )
+        self.preview.grid(row=0, column=1, sticky="nsew")
+
+        buttons = ttk.Frame(root)
+        buttons.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        ttk.Button(buttons, text="载入预览", command=self.load_into_app, style="Accent.TButton").grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(buttons, text="关闭", command=self.destroy, style="Secondary.TButton").grid(row=0, column=1)
+
+        if files:
+            self.listbox.selection_set(0)
+            self.load_selected_preview()
+
+    def selected_file(self) -> Path | None:
+        selection = self.listbox.curselection()
+        if not selection:
+            return None
+        return self.files[selection[0]]
+
+    def load_selected_preview(self) -> None:
+        path = self.selected_file()
+        if path is None:
+            return
+        self.preview.delete("1.0", "end")
+        self.preview.insert("1.0", path.read_text(encoding="utf-8"))
+
+    def load_into_app(self) -> None:
+        path = self.selected_file()
+        if path is None:
+            return
+        body = path.read_text(encoding="utf-8")
+        self.parent_app.current_digest = body
+        self.parent_app.set_output(body)
+        self.parent_app.set_status(f"已载入历史简报 {path.name}。")
+        self.destroy()
+
+
 class DailyPulseApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -571,6 +640,7 @@ class DailyPulseApp(tk.Tk):
         self.env_data = read_env()
         self.pending_env_updates: dict[str, str] = {}
         self.sources: list[dict[str, Any]] = list(self.config_data.get("sources", []))
+        self.source_health: dict[str, str] = {}
         self.worker_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         self.current_digest = ""
         self.timer_after_id: str | None = None
@@ -588,6 +658,7 @@ class DailyPulseApp(tk.Tk):
         self._build_ui()
         self._load_fields()
         self._refresh_sources()
+        self.show_initial_empty_state()
         self._poll_worker_queue()
         self.after(1200, self.check_for_updates)
 
@@ -678,7 +749,7 @@ class DailyPulseApp(tk.Tk):
 
         control_bar = ttk.Frame(controls_box, style="Surface.TFrame")
         control_bar.grid(row=0, column=0, sticky="ew")
-        control_bar.columnconfigure(7, weight=1)
+        control_bar.columnconfigure(8, weight=1)
 
         ttk.Button(
             control_bar,
@@ -696,20 +767,23 @@ class DailyPulseApp(tk.Tk):
         ttk.Button(control_bar, text="预览", style="Accent.TButton", command=self.preview_digest).grid(row=0, column=3, padx=(0, 8))
         ttk.Button(control_bar, text="发送", command=self.send_digest, style="Secondary.TButton").grid(row=0, column=4, padx=(0, 8))
         ttk.Button(control_bar, text="存文件", command=self.save_digest_file, style="Secondary.TButton").grid(row=0, column=5, padx=(0, 8))
-        ttk.Button(control_bar, text="启动定时", command=self.start_timer, style="Secondary.TButton").grid(row=0, column=6, padx=(0, 8))
-        ttk.Button(control_bar, text="停止定时", command=self.stop_timer, style="Secondary.TButton").grid(row=0, column=7, sticky="w")
+        ttk.Button(control_bar, text="历史", command=self.open_history, style="Secondary.TButton").grid(row=0, column=6, padx=(0, 8))
+        ttk.Button(control_bar, text="启动定时", command=self.start_timer, style="Secondary.TButton").grid(row=0, column=7, padx=(0, 8))
+        ttk.Button(control_bar, text="停止定时", command=self.stop_timer, style="Secondary.TButton").grid(row=0, column=8, sticky="w")
 
         self.sources_panel = ttk.Frame(controls_box, style="Surface.TFrame")
         self.sources_panel.grid(row=1, column=0, sticky="ew", pady=(10, 0))
         self.sources_panel.columnconfigure(0, weight=1)
 
-        columns = ("name", "type", "limit", "url")
+        columns = ("name", "status", "type", "limit", "url")
         self.source_tree = ttk.Treeview(self.sources_panel, columns=columns, show="headings", selectmode="browse", height=5)
         self.source_tree.heading("name", text="名称")
+        self.source_tree.heading("status", text="状态")
         self.source_tree.heading("type", text="类型")
         self.source_tree.heading("limit", text="条数")
         self.source_tree.heading("url", text="URL")
         self.source_tree.column("name", width=150, minwidth=110)
+        self.source_tree.column("status", width=110, minwidth=90, anchor="center")
         self.source_tree.column("type", width=70, minwidth=60, anchor="center")
         self.source_tree.column("limit", width=58, minwidth=50, anchor="center")
         self.source_tree.column("url", width=360, minwidth=240)
@@ -740,6 +814,7 @@ class DailyPulseApp(tk.Tk):
 
         self.title_var = tk.StringVar()
         self.words_var = tk.StringVar()
+        self.summary_style_var = tk.StringVar()
         self.max_items_var = tk.StringVar()
         self.schedule_var = tk.StringVar()
         self.endpoint_var = tk.StringVar()
@@ -753,6 +828,15 @@ class DailyPulseApp(tk.Tk):
         settings = [
             ("标题", ttk.Entry(self.settings_panel, textvariable=self.title_var)),
             ("摘要字数", ttk.Entry(self.settings_panel, textvariable=self.words_var)),
+            (
+                "摘要风格",
+                ttk.Combobox(
+                    self.settings_panel,
+                    textvariable=self.summary_style_var,
+                    values=("标准", "简洁", "深度", "行动"),
+                    state="readonly",
+                ),
+            ),
             ("总条数上限", ttk.Entry(self.settings_panel, textvariable=self.max_items_var)),
             ("每日时间", ttk.Entry(self.settings_panel, textvariable=self.schedule_var)),
             ("AI Endpoint", ttk.Entry(self.settings_panel, textvariable=self.endpoint_var)),
@@ -837,9 +921,11 @@ class DailyPulseApp(tk.Tk):
         ai = self.config_data.get("ai", {})
         delivery = self.config_data.get("delivery", {})
         key_name = ai.get("api_key_env", "DEEPSEEK_API_KEY")
+        style_labels = {"brief": "简洁", "standard": "标准", "deep": "深度", "action": "行动"}
 
         self.title_var.set(self.config_data.get("title", "DailyPulse 个人信息简报"))
         self.words_var.set(str(self.config_data.get("summary_words", 450)))
+        self.summary_style_var.set(style_labels.get(str(self.config_data.get("summary_style", "standard")), "标准"))
         self.max_items_var.set(str(self.config_data.get("max_total_items", 30)))
         self.schedule_var.set(self.config_data.get("schedule", {}).get("time", "08:00"))
         self.endpoint_var.set(ai.get("endpoint", "https://api.deepseek.com/chat/completions"))
@@ -855,11 +941,13 @@ class DailyPulseApp(tk.Tk):
         for item_id in self.source_tree.get_children():
             self.source_tree.delete(item_id)
         for source in self.sources:
+            key = self.source_key(source)
             self.source_tree.insert(
                 "",
                 "end",
                 values=(
                     source.get("name", ""),
+                    self.source_health.get(key, "未检查"),
                     source.get("type", "rss"),
                     source.get("limit", 5),
                     source.get("url", ""),
@@ -867,6 +955,13 @@ class DailyPulseApp(tk.Tk):
             )
         self.source_count_var.set(f"{len(self.sources)} 个来源")
         self.update_toggle_labels()
+
+    def source_key(self, source: dict[str, Any]) -> str:
+        return f"{source.get('name', '')}\n{source.get('url', '')}"
+
+    def update_source_health(self, health: dict[str, str]) -> None:
+        self.source_health.update(health)
+        self._refresh_sources()
 
     def selected_source_index(self) -> int | None:
         selection = self.source_tree.selection()
@@ -921,6 +1016,8 @@ class DailyPulseApp(tk.Tk):
         config = dict(self.config_data)
         config["title"] = self.title_var.get().strip() or "DailyPulse 个人信息简报"
         config["summary_words"] = int(self.words_var.get().strip() or "450")
+        style_values = {"简洁": "brief", "标准": "standard", "深度": "deep", "行动": "action"}
+        config["summary_style"] = style_values.get(self.summary_style_var.get().strip(), "standard")
         config["max_total_items"] = int(self.max_items_var.get().strip() or "30")
         config["schedule"] = dict(config.get("schedule", {}))
         config["schedule"]["time"] = self.schedule_var.get().strip() or "08:00"
@@ -993,6 +1090,15 @@ class DailyPulseApp(tk.Tk):
         self.output.delete("1.0", "end")
         self.output.insert("1.0", text)
 
+    def show_initial_empty_state(self) -> None:
+        if self.sources:
+            self.set_output("暂无简报。点击“预览”生成今天的 DailyPulse。\n")
+            return
+        self.set_output(
+            "欢迎使用 DailyPulse。\n\n"
+            "先展开“信息源”添加 RSS 或网页来源，再点击“预览”生成第一份简报。\n"
+        )
+
     def run_background(self, label: str, worker: Callable[[], Any]) -> None:
         self.set_status(label)
 
@@ -1013,14 +1119,23 @@ class DailyPulseApp(tk.Tk):
             return
 
         if kind == "ok":
-            if isinstance(payload, str):
-                self.current_digest = payload
-                self.set_output(payload)
-                self.set_status("简报已生成。")
+            if isinstance(payload, tuple) and payload[0] == "digest":
+                self.current_digest = payload[1]
+                self.set_output(payload[1])
+                self.update_source_health(payload[2])
+                self.save_history_entry(payload[1])
+                self.set_status("简报已生成并保存到历史。")
             elif isinstance(payload, tuple) and payload[0] == "sent":
                 self.current_digest = payload[1]
                 self.set_output(payload[1])
-                self.set_status("简报已发送。")
+                self.update_source_health(payload[2])
+                self.save_history_entry(payload[1])
+                self.set_status("简报已发送并保存到历史。")
+            elif isinstance(payload, str):
+                self.current_digest = payload
+                self.set_output(payload)
+                self.save_history_entry(payload)
+                self.set_status("简报已生成并保存到历史。")
         else:
             self.set_status("运行失败。")
             messagebox.showerror("运行失败", str(payload), parent=self)
@@ -1050,21 +1165,48 @@ class DailyPulseApp(tk.Tk):
             webbrowser.open(url)
             self.set_status(f"已打开 {latest} 下载页面。")
 
-    def generate_digest(self) -> str:
+    def health_key_from_result(self, result: daily_pulse.SourceFetchResult) -> str:
+        return f"{result.source.name}\n{result.source.url}"
+
+    def source_health_from_results(self, results: list[daily_pulse.SourceFetchResult]) -> dict[str, str]:
+        health: dict[str, str] = {}
+        for result in results:
+            if result.error:
+                health[self.health_key_from_result(result)] = "失败"
+            elif result.items:
+                health[self.health_key_from_result(result)] = f"正常 {len(result.items)}"
+            else:
+                health[self.health_key_from_result(result)] = "空内容"
+        return health
+
+    def generate_digest(self) -> tuple[str, dict[str, str]]:
         config = self.build_config_from_fields()
         key_name = config.get("ai", {}).get("api_key_env", "DEEPSEEK_API_KEY")
         os.environ[key_name] = self.api_key_var.get().strip()
         daily_pulse.load_env(str(ENV_PATH))
-        items, errors = daily_pulse.collect_items(config)
+        results = daily_pulse.collect_source_results(config)
+        items: list[daily_pulse.Item] = []
+        errors: list[str] = []
+        for result in results:
+            items.extend(result.items)
+            if result.error:
+                errors.append(result.error)
         if not items:
             details = "\n".join(errors) if errors else "没有抓取到可用内容。"
             raise RuntimeError(details)
-        return daily_pulse.build_digest(config, items, errors)
+        max_total = int(config.get("max_total_items", 30))
+        digest = daily_pulse.build_digest(config, items[:max_total], errors)
+        return digest, self.source_health_from_results(results)
 
     def preview_digest(self) -> None:
         if not self.save_all():
             return
-        self.run_background("正在抓取来源并生成简报...", self.generate_digest)
+
+        def worker() -> tuple[str, str, dict[str, str]]:
+            digest, health = self.generate_digest()
+            return ("digest", digest, health)
+
+        self.run_background("正在抓取来源并生成简报...", worker)
 
     def send_digest(self) -> None:
         if not self.save_all():
@@ -1072,10 +1214,10 @@ class DailyPulseApp(tk.Tk):
         if not messagebox.askyesno("发送简报", "确定按当前发送渠道发送一次简报吗？", parent=self):
             return
 
-        def worker() -> tuple[str, str]:
-            digest = self.generate_digest()
+        def worker() -> tuple[str, str, dict[str, str]]:
+            digest, health = self.generate_digest()
             daily_pulse.send_digest(self.build_config_from_fields(), digest)
-            return ("sent", digest)
+            return ("sent", digest, health)
 
         self.run_background("正在生成并发送简报...", worker)
 
@@ -1095,6 +1237,25 @@ class DailyPulseApp(tk.Tk):
         if path:
             Path(path).write_text(body + "\n", encoding="utf-8")
             self.set_status(f"已保存到 {path}")
+
+    def save_history_entry(self, body: str) -> None:
+        if not body.strip() or body.startswith("欢迎使用 DailyPulse"):
+            return
+        HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+        path = HISTORY_DIR / f"daily-pulse-{dt.datetime.now():%Y-%m-%d-%H%M%S-%f}.txt"
+        path.write_text(body.rstrip() + "\n", encoding="utf-8")
+
+    def history_files(self) -> list[Path]:
+        if not HISTORY_DIR.exists():
+            return []
+        return sorted(HISTORY_DIR.glob("daily-pulse-*.txt"), reverse=True)
+
+    def open_history(self) -> None:
+        files = self.history_files()
+        if not files:
+            messagebox.showinfo("暂无历史", "生成简报后会自动保存在历史里。", parent=self)
+            return
+        HistoryWindow(self, files)
 
     def start_timer(self) -> None:
         self.stop_timer(silent=True)
