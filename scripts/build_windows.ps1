@@ -15,9 +15,11 @@ python -m PyInstaller `
   --windowed `
   --onefile `
   --name DailyPulse `
+  --icon assets\DailyPulse.ico `
   --add-data "config.example.json;." `
   --add-data "config.deepseek.example.json;." `
   --add-data ".env.example;." `
+  --add-data "assets;assets" `
   daily_pulse_app.py
 
 Compress-Archive -Path dist\DailyPulse.exe, README.md -DestinationPath dist\DailyPulse-Windows.zip -Force

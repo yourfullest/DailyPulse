@@ -41,6 +41,19 @@ def user_data_dir() -> Path:
 APP_DATA_DIR = user_data_dir() if IS_BUNDLED else SOURCE_ROOT
 CONFIG_PATH = APP_DATA_DIR / "config.json"
 ENV_PATH = APP_DATA_DIR / ".env"
+ASSET_ROOT = RESOURCE_ROOT / "assets"
+APP_ICON_PNG = ASSET_ROOT / "DailyPulse.png"
+
+BG = "#eef2f7"
+SURFACE = "#ffffff"
+SURFACE_ALT = "#f8fafc"
+TEXT = "#172033"
+MUTED = "#667085"
+BORDER = "#d8dee9"
+ACCENT = "#2563eb"
+ACCENT_DARK = "#1d4ed8"
+TEAL = "#0f766e"
+CORAL = "#f9735b"
 
 
 def read_env(path: Path = ENV_PATH) -> dict[str, str]:
@@ -161,6 +174,7 @@ class DailyPulseApp(tk.Tk):
         self.title("DailyPulse")
         self.geometry("1120x760")
         self.minsize(940, 620)
+        self.configure(bg=BG)
 
         self.config_data = load_config()
         self.env_data = read_env()
@@ -168,36 +182,99 @@ class DailyPulseApp(tk.Tk):
         self.worker_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         self.current_digest = ""
         self.timer_after_id: str | None = None
+        self.app_icon: tk.PhotoImage | None = None
+        self.header_icon: tk.PhotoImage | None = None
+        self.source_count_var = tk.StringVar(value="0 个来源")
+        self.model_badge_var = tk.StringVar(value="模型未配置")
 
+        self._load_window_icon()
         self._configure_style()
         self._build_ui()
         self._load_fields()
         self._refresh_sources()
         self._poll_worker_queue()
 
+    def _load_window_icon(self) -> None:
+        if not APP_ICON_PNG.exists():
+            return
+        try:
+            self.app_icon = tk.PhotoImage(file=str(APP_ICON_PNG))
+            self.iconphoto(True, self.app_icon)
+            self.header_icon = self.app_icon.subsample(24, 24)
+        except tk.TclError:
+            self.app_icon = None
+            self.header_icon = None
+
     def _configure_style(self) -> None:
         style = ttk.Style(self)
         if "clam" in style.theme_names():
             style.theme_use("clam")
-        style.configure("TFrame", background="#f7f7f4")
-        style.configure("TLabelframe", background="#f7f7f4")
-        style.configure("TLabelframe.Label", background="#f7f7f4", font=("TkDefaultFont", 12, "bold"))
-        style.configure("TLabel", background="#f7f7f4")
-        style.configure("Accent.TButton", font=("TkDefaultFont", 11, "bold"))
-        style.configure("Status.TLabel", foreground="#445", background="#efefea", padding=8)
+        style.configure("TFrame", background=BG)
+        style.configure("Surface.TFrame", background=SURFACE)
+        style.configure("Hero.TFrame", background=BG)
+        style.configure("TLabelframe", background=SURFACE, bordercolor=BORDER, relief="solid")
+        style.configure(
+            "TLabelframe.Label",
+            background=SURFACE,
+            foreground=TEXT,
+            font=("TkDefaultFont", 13, "bold"),
+        )
+        style.configure("TLabel", background=BG, foreground=TEXT)
+        style.configure("Surface.TLabel", background=SURFACE, foreground=TEXT)
+        style.configure("Muted.TLabel", background=BG, foreground=MUTED)
+        style.configure("MutedSurface.TLabel", background=SURFACE, foreground=MUTED)
+        style.configure("HeroTitle.TLabel", background=BG, foreground=TEXT, font=("TkDefaultFont", 25, "bold"))
+        style.configure("Badge.TLabel", background="#dbeafe", foreground=ACCENT_DARK, padding=(10, 5))
+        style.configure("Count.TLabel", background="#ccfbf1", foreground=TEAL, padding=(10, 5))
+        style.configure("TButton", padding=(12, 7), font=("TkDefaultFont", 11))
+        style.map("TButton", background=[("active", "#e5e7eb")])
+        style.configure("Accent.TButton", background=ACCENT, foreground="#ffffff", font=("TkDefaultFont", 11, "bold"))
+        style.map(
+            "Accent.TButton",
+            background=[("active", ACCENT_DARK), ("pressed", ACCENT_DARK)],
+            foreground=[("active", "#ffffff"), ("pressed", "#ffffff")],
+        )
+        style.configure("Secondary.TButton", background=SURFACE_ALT, foreground=TEXT)
+        style.configure("Status.TLabel", foreground="#344054", background="#e9eef6", padding=(12, 8))
+        style.configure(
+            "Treeview",
+            background=SURFACE,
+            fieldbackground=SURFACE,
+            foreground=TEXT,
+            rowheight=32,
+            bordercolor=BORDER,
+            borderwidth=0,
+        )
+        style.configure(
+            "Treeview.Heading",
+            background="#edf2f7",
+            foreground="#344054",
+            font=("TkDefaultFont", 11, "bold"),
+            padding=(8, 8),
+        )
+        style.map("Treeview", background=[("selected", "#dbeafe")], foreground=[("selected", TEXT)])
+        style.configure("TEntry", fieldbackground="#ffffff", foreground=TEXT, padding=6)
+        style.configure("TCombobox", fieldbackground="#ffffff", foreground=TEXT, padding=6)
+        style.configure("TCheckbutton", background=SURFACE, foreground=TEXT)
 
     def _build_ui(self) -> None:
-        root = ttk.Frame(self, padding=14)
+        root = ttk.Frame(self, padding=18)
         root.pack(fill="both", expand=True)
         root.columnconfigure(0, weight=1)
         root.columnconfigure(1, weight=1)
         root.rowconfigure(1, weight=1)
 
-        header = ttk.Frame(root)
-        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
-        header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="DailyPulse", font=("TkDefaultFont", 22, "bold")).grid(row=0, column=0, sticky="w")
-        ttk.Label(header, text="个人信息简报生成器", font=("TkDefaultFont", 12)).grid(row=1, column=0, sticky="w")
+        header = ttk.Frame(root, style="Hero.TFrame")
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 16))
+        header.columnconfigure(1, weight=1)
+        if self.header_icon:
+            ttk.Label(header, image=self.header_icon, background=BG).grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 12))
+        ttk.Label(header, text="DailyPulse", style="HeroTitle.TLabel").grid(row=0, column=1, sticky="w")
+        ttk.Label(header, text="把信息源整理成一份可发送的 AI 简报", style="Muted.TLabel", font=("TkDefaultFont", 12)).grid(
+            row=1, column=1, sticky="w", pady=(2, 0)
+        )
+        ttk.Label(header, textvariable=self.source_count_var, style="Count.TLabel").grid(row=0, column=2, sticky="e", padx=(8, 0))
+        ttk.Label(header, textvariable=self.model_badge_var, style="Badge.TLabel").grid(row=0, column=3, sticky="e", padx=(8, 0))
 
         sources_box = ttk.LabelFrame(root, text="信息源", padding=10)
         sources_box.grid(row=1, column=0, sticky="nsew", padx=(0, 8))
@@ -232,9 +309,9 @@ class DailyPulseApp(tk.Tk):
                 ("下移", lambda: self.move_source(1)),
             ]
         ):
-            ttk.Button(source_buttons, text=text, command=command).grid(row=0, column=idx, padx=(0, 8))
+            ttk.Button(source_buttons, text=text, command=command, style="Secondary.TButton").grid(row=0, column=idx, padx=(0, 8))
 
-        settings_box = ttk.LabelFrame(root, text="设置", padding=10)
+        settings_box = ttk.LabelFrame(root, text="API 与发送", padding=12)
         settings_box.grid(row=1, column=1, sticky="nsew", padx=(8, 0))
         settings_box.columnconfigure(1, weight=1)
 
@@ -273,15 +350,15 @@ class DailyPulseApp(tk.Tk):
 
         action_row = ttk.Frame(settings_box)
         action_row.grid(row=len(settings) + 1, column=0, columnspan=2, sticky="ew", pady=(16, 0))
-        ttk.Button(action_row, text="保存配置", command=self.save_all).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(action_row, text="保存配置", command=self.save_all, style="Secondary.TButton").grid(row=0, column=0, padx=(0, 8))
         ttk.Button(action_row, text="预览简报", style="Accent.TButton", command=self.preview_digest).grid(row=0, column=1, padx=(0, 8))
-        ttk.Button(action_row, text="发送一次", command=self.send_digest).grid(row=0, column=2, padx=(0, 8))
-        ttk.Button(action_row, text="保存为文件", command=self.save_digest_file).grid(row=0, column=3)
+        ttk.Button(action_row, text="发送一次", command=self.send_digest, style="Secondary.TButton").grid(row=0, column=2, padx=(0, 8))
+        ttk.Button(action_row, text="保存为文件", command=self.save_digest_file, style="Secondary.TButton").grid(row=0, column=3)
 
         timer_row = ttk.Frame(settings_box)
         timer_row.grid(row=len(settings) + 2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
-        ttk.Button(timer_row, text="启动 App 内定时", command=self.start_timer).grid(row=0, column=0, padx=(0, 8))
-        ttk.Button(timer_row, text="停止定时", command=self.stop_timer).grid(row=0, column=1)
+        ttk.Button(timer_row, text="启动 App 内定时", command=self.start_timer, style="Secondary.TButton").grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(timer_row, text="停止定时", command=self.stop_timer, style="Secondary.TButton").grid(row=0, column=1)
 
         output_box = ttk.LabelFrame(root, text="简报预览", padding=10)
         output_box.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(14, 0))
@@ -289,7 +366,20 @@ class DailyPulseApp(tk.Tk):
         output_box.columnconfigure(0, weight=1)
         root.rowconfigure(2, weight=2)
 
-        self.output = scrolledtext.ScrolledText(output_box, wrap="word", font=("Menlo", 12), height=12)
+        output_font = "Consolas" if sys.platform.startswith("win") else "Menlo"
+        self.output = scrolledtext.ScrolledText(
+            output_box,
+            wrap="word",
+            font=(output_font, 12),
+            height=12,
+            borderwidth=0,
+            relief="flat",
+            background="#fbfdff",
+            foreground=TEXT,
+            insertbackground=ACCENT,
+            padx=12,
+            pady=12,
+        )
         self.output.grid(row=0, column=0, sticky="nsew")
 
         self.status_var = tk.StringVar(value="就绪")
@@ -307,6 +397,7 @@ class DailyPulseApp(tk.Tk):
         self.schedule_var.set(self.config_data.get("schedule", {}).get("time", "08:00"))
         self.endpoint_var.set(ai.get("endpoint", "https://api.deepseek.com/chat/completions"))
         self.model_var.set(ai.get("model", "deepseek-v4-flash"))
+        self.model_badge_var.set(f"模型 {self.model_var.get() or '未配置'}")
         self.api_key_env_var.set(key_name)
         self.api_key_var.set(self.env_data.get(key_name, os.getenv(key_name, "")))
         self.email_enabled_var.set(bool(delivery.get("email", {}).get("enabled", False)))
@@ -327,6 +418,7 @@ class DailyPulseApp(tk.Tk):
                     source.get("url", ""),
                 ),
             )
+        self.source_count_var.set(f"{len(self.sources)} 个来源")
 
     def selected_source_index(self) -> int | None:
         selection = self.source_tree.selection()
@@ -420,6 +512,7 @@ class DailyPulseApp(tk.Tk):
         os.environ[key_name] = self.api_key_var.get().strip()
         self.config_data = config
         self.env_data = read_env()
+        self.model_badge_var.set(f"模型 {config.get('ai', {}).get('model', '未配置')}")
         self.set_status(f"已保存 {CONFIG_PATH.name} 和 {ENV_PATH.name}。")
         return True
 

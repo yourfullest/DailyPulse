@@ -14,9 +14,11 @@ python3 -m PyInstaller \
   --clean \
   --windowed \
   --name DailyPulse \
+  --icon assets/DailyPulse.icns \
   --add-data "config.example.json:." \
   --add-data "config.deepseek.example.json:." \
   --add-data ".env.example:." \
+  --add-data "assets:assets" \
   daily_pulse_app.py
 
 hdiutil create \
