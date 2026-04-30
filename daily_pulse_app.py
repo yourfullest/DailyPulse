@@ -27,7 +27,7 @@ import daily_pulse
 
 
 APP_NAME = "DailyPulse"
-APP_VERSION = "0.1.4"
+APP_VERSION = "0.1.5"
 UPDATE_API_URL = "https://api.github.com/repos/yourfullest/DailyPulse/releases/latest"
 UPDATE_PAGE_URL = "https://github.com/yourfullest/DailyPulse/releases/latest"
 IS_BUNDLED = bool(getattr(sys, "frozen", False))
@@ -51,16 +51,21 @@ ENV_PATH = APP_DATA_DIR / ".env"
 ASSET_ROOT = RESOURCE_ROOT / "assets"
 APP_ICON_PNG = ASSET_ROOT / "DailyPulse.png"
 
-BG = "#eef2f7"
+BG = "#f4f7f4"
 SURFACE = "#ffffff"
-SURFACE_ALT = "#f8fafc"
-TEXT = "#172033"
-MUTED = "#667085"
-BORDER = "#d8dee9"
-ACCENT = "#2563eb"
-ACCENT_DARK = "#1d4ed8"
-TEAL = "#0f766e"
-CORAL = "#f9735b"
+SURFACE_ALT = "#f7faf7"
+TEXT = "#1d2733"
+MUTED = "#66746f"
+BORDER = "#d6e0dc"
+ACCENT = "#0f8f8c"
+ACCENT_DARK = "#0a6666"
+TEAL = "#138a7e"
+CORAL = "#f16f51"
+MINT_SOFT = "#dff6ef"
+SKY_SOFT = "#e3f1ff"
+CORAL_SOFT = "#ffe7df"
+STATUS_BG = "#edf4ef"
+OUTPUT_BG = "#fbfcf8"
 
 
 def parse_version(value: str) -> tuple[int, ...]:
@@ -616,18 +621,18 @@ class DailyPulseApp(tk.Tk):
         style.configure("Muted.TLabel", background=BG, foreground=MUTED)
         style.configure("MutedSurface.TLabel", background=SURFACE, foreground=MUTED)
         style.configure("HeroTitle.TLabel", background=BG, foreground=TEXT, font=("TkDefaultFont", 25, "bold"))
-        style.configure("Badge.TLabel", background="#dbeafe", foreground=ACCENT_DARK, padding=(10, 5))
-        style.configure("Count.TLabel", background="#ccfbf1", foreground=TEAL, padding=(10, 5))
+        style.configure("Badge.TLabel", background=CORAL_SOFT, foreground="#9f3f2d", padding=(10, 5))
+        style.configure("Count.TLabel", background=MINT_SOFT, foreground=TEAL, padding=(10, 5))
         style.configure("TButton", padding=(12, 7), font=("TkDefaultFont", 11))
-        style.map("TButton", background=[("active", "#e5e7eb")])
-        style.configure("Accent.TButton", background=ACCENT, foreground="#ffffff", font=("TkDefaultFont", 11, "bold"))
+        style.map("TButton", background=[("active", SKY_SOFT)])
+        style.configure("Accent.TButton", background=ACCENT, foreground=SURFACE, font=("TkDefaultFont", 11, "bold"))
         style.map(
             "Accent.TButton",
             background=[("active", ACCENT_DARK), ("pressed", ACCENT_DARK)],
-            foreground=[("active", "#ffffff"), ("pressed", "#ffffff")],
+            foreground=[("active", SURFACE), ("pressed", SURFACE)],
         )
         style.configure("Secondary.TButton", background=SURFACE_ALT, foreground=TEXT)
-        style.configure("Status.TLabel", foreground="#344054", background="#e9eef6", padding=(12, 8))
+        style.configure("Status.TLabel", foreground="#38514d", background=STATUS_BG, padding=(12, 8))
         style.configure(
             "Treeview",
             background=SURFACE,
@@ -639,14 +644,14 @@ class DailyPulseApp(tk.Tk):
         )
         style.configure(
             "Treeview.Heading",
-            background="#edf2f7",
-            foreground="#344054",
+            background=SKY_SOFT,
+            foreground="#335061",
             font=("TkDefaultFont", 11, "bold"),
             padding=(8, 8),
         )
-        style.map("Treeview", background=[("selected", "#dbeafe")], foreground=[("selected", TEXT)])
-        style.configure("TEntry", fieldbackground="#ffffff", foreground=TEXT, padding=6)
-        style.configure("TCombobox", fieldbackground="#ffffff", foreground=TEXT, padding=6)
+        style.map("Treeview", background=[("selected", MINT_SOFT)], foreground=[("selected", TEXT)])
+        style.configure("TEntry", fieldbackground=SURFACE, foreground=TEXT, padding=6)
+        style.configure("TCombobox", fieldbackground=SURFACE, foreground=TEXT, padding=6)
         style.configure("TCheckbutton", background=SURFACE, foreground=TEXT)
 
     def _build_ui(self) -> None:
@@ -789,7 +794,7 @@ class DailyPulseApp(tk.Tk):
             height=12,
             borderwidth=0,
             relief="flat",
-            background="#fbfdff",
+            background=OUTPUT_BG,
             foreground=TEXT,
             insertbackground=ACCENT,
             padx=12,
