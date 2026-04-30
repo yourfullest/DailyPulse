@@ -20,7 +20,6 @@ import re
 import smtplib
 import ssl
 import sys
-import textwrap
 import time
 import urllib.error
 import urllib.parse
@@ -354,11 +353,6 @@ def attempt_ai_summary(config: dict[str, Any], items: list[Item]) -> tuple[str |
         return None, reason
 
 
-def call_ai_summary(config: dict[str, Any], items: list[Item]) -> str | None:
-    summary, _reason = attempt_ai_summary(config, items)
-    return summary
-
-
 def fallback_summary(config: dict[str, Any], items: list[Item], reason: str | None = None) -> str:
     target_words = int(config.get("summary_words", 450))
     max_items = int(config.get("fallback_item_count", 8))
@@ -467,7 +461,9 @@ def send_telegram(config: dict[str, Any], body: str) -> None:
 
     endpoint = f"https://api.telegram.org/bot{token}/sendMessage"
     # Telegram message length limit is 4096; split conservatively.
-    for chunk in textwrap.wrap(body, width=3800, replace_whitespace=False, drop_whitespace=False):
+    limit = 3800
+    for start in range(0, len(body), limit):
+        chunk = body[start : start + limit]
         post_json(endpoint, {"chat_id": chat_id, "text": chunk, "disable_web_page_preview": True})
 
 

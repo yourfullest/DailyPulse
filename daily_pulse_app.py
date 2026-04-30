@@ -411,12 +411,6 @@ class DeliveryDialog(simpledialog.Dialog):
         rows = raw.replace(",", "\n").splitlines()
         return [row.strip() for row in rows if row.strip()]
 
-    def remember_secret(self, env_name: str, value: str) -> None:
-        env_name = env_name.strip()
-        value = value.strip()
-        if env_name and value:
-            self.env_updates[env_name] = value
-
     def current_delivery_config(self) -> tuple[dict[str, Any], dict[str, str]]:
         email_username_env = self.email_username_env_var.get().strip() or "SMTP_USERNAME"
         email_password_env = self.email_password_env_var.get().strip() or "SMTP_PASSWORD"
@@ -475,32 +469,30 @@ class DeliveryDialog(simpledialog.Dialog):
     def apply(self) -> None:
         self.result, self.env_updates = self.current_delivery_config()
 
-    def run_with_env(self, updates: dict[str, str], worker: Callable[[], None]) -> None:
-        previous = {key: os.environ.get(key) for key in updates}
-        try:
-            os.environ.update(updates)
-            worker()
-        finally:
-            for key, value in previous.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
-
-    def run_test(self, label: str, worker: Callable[[], None]) -> None:
+    def run_test(self, label: str, env_updates: dict[str, str], worker: Callable[[], None]) -> None:
         self.test_status_var.set(f"正在测试 {label}...")
+        previous = {key: os.environ.get(key) for key in env_updates}
+        os.environ.update(env_updates)
 
         def target() -> None:
             try:
                 worker()
             except Exception as exc:
-                self.after(0, lambda: self.finish_test(label, exc))
+                self.after(0, lambda: self.finish_test(label, exc, previous))
             else:
-                self.after(0, lambda: self.finish_test(label, None))
+                self.after(0, lambda: self.finish_test(label, None, previous))
 
         threading.Thread(target=target, daemon=True).start()
 
-    def finish_test(self, label: str, error: Exception | None) -> None:
+    def restore_env(self, previous: dict[str, str | None]) -> None:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def finish_test(self, label: str, error: Exception | None, previous_env: dict[str, str | None]) -> None:
+        self.restore_env(previous_env)
         if error:
             self.test_status_var.set(f"{label} 测试失败。")
             messagebox.showerror(f"{label} 测试失败", str(error), parent=self)
@@ -515,16 +507,13 @@ class DeliveryDialog(simpledialog.Dialog):
         delivery["email"]["enabled"] = True
 
         def worker() -> None:
-            self.run_with_env(
-                env_updates,
-                lambda: daily_pulse.send_email(
-                    {"delivery": delivery},
-                    "DailyPulse 测试邮件",
-                    f"DailyPulse 测试邮件发送成功。\n\n时间: {dt.datetime.now():%Y-%m-%d %H:%M:%S}",
-                ),
+            daily_pulse.send_email(
+                {"delivery": delivery},
+                "DailyPulse 测试邮件",
+                f"DailyPulse 测试邮件发送成功。\n\n时间: {dt.datetime.now():%Y-%m-%d %H:%M:%S}",
             )
 
-        self.run_test("邮件", worker)
+        self.run_test("邮件", env_updates, worker)
 
     def test_telegram(self) -> None:
         if not self.validate_telegram_fields(require_enabled=True):
@@ -533,15 +522,12 @@ class DeliveryDialog(simpledialog.Dialog):
         delivery["telegram"]["enabled"] = True
 
         def worker() -> None:
-            self.run_with_env(
-                env_updates,
-                lambda: daily_pulse.send_telegram(
-                    {"delivery": delivery},
-                    f"DailyPulse Telegram 测试发送成功。\n时间: {dt.datetime.now():%Y-%m-%d %H:%M:%S}",
-                ),
+            daily_pulse.send_telegram(
+                {"delivery": delivery},
+                f"DailyPulse Telegram 测试发送成功。\n时间: {dt.datetime.now():%Y-%m-%d %H:%M:%S}",
             )
 
-        self.run_test("Telegram", worker)
+        self.run_test("Telegram", env_updates, worker)
 
     def test_webhook(self) -> None:
         if not self.validate_webhook_fields(require_enabled=True):
@@ -550,15 +536,12 @@ class DeliveryDialog(simpledialog.Dialog):
         delivery["webhook"]["enabled"] = True
 
         def worker() -> None:
-            self.run_with_env(
-                env_updates,
-                lambda: daily_pulse.send_webhook(
-                    {"delivery": delivery},
-                    f"DailyPulse Webhook 测试发送成功。\n时间: {dt.datetime.now():%Y-%m-%d %H:%M:%S}",
-                ),
+            daily_pulse.send_webhook(
+                {"delivery": delivery},
+                f"DailyPulse Webhook 测试发送成功。\n时间: {dt.datetime.now():%Y-%m-%d %H:%M:%S}",
             )
 
-        self.run_test("Webhook", worker)
+        self.run_test("Webhook", env_updates, worker)
 
 
 class HistoryWindow(tk.Toplevel):
@@ -640,10 +623,11 @@ class DailyPulseApp(tk.Tk):
         self.env_data = read_env()
         self.pending_env_updates: dict[str, str] = {}
         self.sources: list[dict[str, Any]] = list(self.config_data.get("sources", []))
-        self.source_health: dict[str, str] = {}
+        self.source_health: dict[tuple[str, str], str] = {}
         self.worker_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         self.current_digest = ""
         self.timer_after_id: str | None = None
+        self.skipped_version: str | None = None
         self.app_icon: tk.PhotoImage | None = None
         self.header_icon: tk.PhotoImage | None = None
         self.source_count_var = tk.StringVar(value="0 个来源")
@@ -956,8 +940,8 @@ class DailyPulseApp(tk.Tk):
         self.source_count_var.set(f"{len(self.sources)} 个来源")
         self.update_toggle_labels()
 
-    def source_key(self, source: dict[str, Any]) -> str:
-        return f"{source.get('name', '')}\n{source.get('url', '')}"
+    def source_key(self, source: dict[str, Any]) -> tuple[str, str]:
+        return (source.get("name", ""), source.get("url", ""))
 
     def update_source_health(self, health: dict[str, str]) -> None:
         self.source_health.update(health)
@@ -1079,6 +1063,8 @@ class DailyPulseApp(tk.Tk):
         self.config_data = config
         self.env_data = read_env()
         self.model_badge_var.set(f"模型 {config.get('ai', {}).get('model', '未配置')}")
+        if self.timer_after_id:
+            self.schedule_next_run()
         self.set_status(f"已保存 {CONFIG_PATH.name} 和 {ENV_PATH.name}。")
         return True
 
@@ -1111,11 +1097,13 @@ class DailyPulseApp(tk.Tk):
 
         threading.Thread(target=target, daemon=True).start()
 
+    _POLL_INTERVAL_MS = 250
+
     def _poll_worker_queue(self) -> None:
         try:
             kind, payload = self.worker_queue.get_nowait()
         except queue.Empty:
-            self.after(150, self._poll_worker_queue)
+            self.after(self._POLL_INTERVAL_MS, self._poll_worker_queue)
             return
 
         if kind == "ok":
@@ -1139,7 +1127,7 @@ class DailyPulseApp(tk.Tk):
         else:
             self.set_status("运行失败。")
             messagebox.showerror("运行失败", str(payload), parent=self)
-        self.after(150, self._poll_worker_queue)
+        self.after(0, self._poll_worker_queue)
 
     def check_for_updates(self) -> None:
         def worker() -> None:
@@ -1149,6 +1137,8 @@ class DailyPulseApp(tk.Tk):
                 return
             if not release or not is_newer_version(release["tag_name"]):
                 return
+            if release["tag_name"] == self.skipped_version:
+                return
             self.after(0, lambda: self.prompt_for_update(release))
 
         threading.Thread(target=worker, daemon=True).start()
@@ -1156,20 +1146,23 @@ class DailyPulseApp(tk.Tk):
     def prompt_for_update(self, release: dict[str, str]) -> None:
         latest = release["tag_name"]
         url = release.get("html_url") or UPDATE_PAGE_URL
-        should_open = messagebox.askyesno(
+        result = messagebox.askyesnocancel(
             "发现新版本",
-            f"DailyPulse 有新版本 {latest} 可用。\n\n当前版本：v{APP_VERSION}\n是否打开下载页面？",
+            f"DailyPulse 有新版本 {latest} 可用。\n\n当前版本：v{APP_VERSION}",
             parent=self,
         )
-        if should_open:
+        if result is True:
             webbrowser.open(url)
             self.set_status(f"已打开 {latest} 下载页面。")
+        elif result is False:
+            self.skipped_version = latest
+            self.set_status(f"已跳过版本 {latest}。")
 
-    def health_key_from_result(self, result: daily_pulse.SourceFetchResult) -> str:
-        return f"{result.source.name}\n{result.source.url}"
+    def health_key_from_result(self, result: daily_pulse.SourceFetchResult) -> tuple[str, str]:
+        return (result.source.name, result.source.url)
 
-    def source_health_from_results(self, results: list[daily_pulse.SourceFetchResult]) -> dict[str, str]:
-        health: dict[str, str] = {}
+    def source_health_from_results(self, results: list[daily_pulse.SourceFetchResult]) -> dict[tuple[str, str], str]:
+        health: dict[tuple[str, str], str] = {}
         for result in results:
             if result.error:
                 health[self.health_key_from_result(result)] = "失败"
@@ -1179,7 +1172,7 @@ class DailyPulseApp(tk.Tk):
                 health[self.health_key_from_result(result)] = "空内容"
         return health
 
-    def generate_digest(self) -> tuple[str, dict[str, str]]:
+    def generate_digest(self) -> tuple[str, dict[tuple[str, str], str]]:
         config = self.build_config_from_fields()
         key_name = config.get("ai", {}).get("api_key_env", "DEEPSEEK_API_KEY")
         os.environ[key_name] = self.api_key_var.get().strip()
@@ -1202,7 +1195,7 @@ class DailyPulseApp(tk.Tk):
         if not self.save_all():
             return
 
-        def worker() -> tuple[str, str, dict[str, str]]:
+        def worker() -> tuple[str, str, dict[tuple[str, str], str]]:
             digest, health = self.generate_digest()
             return ("digest", digest, health)
 
@@ -1214,7 +1207,7 @@ class DailyPulseApp(tk.Tk):
         if not messagebox.askyesno("发送简报", "确定按当前发送渠道发送一次简报吗？", parent=self):
             return
 
-        def worker() -> tuple[str, str, dict[str, str]]:
+        def worker() -> tuple[str, str, dict[tuple[str, str], str]]:
             digest, health = self.generate_digest()
             daily_pulse.send_digest(self.build_config_from_fields(), digest)
             return ("sent", digest, health)
@@ -1238,12 +1231,22 @@ class DailyPulseApp(tk.Tk):
             Path(path).write_text(body + "\n", encoding="utf-8")
             self.set_status(f"已保存到 {path}")
 
+    MAX_HISTORY_FILES = 90
+
     def save_history_entry(self, body: str) -> None:
         if not body.strip() or body.startswith("欢迎使用 DailyPulse"):
             return
         HISTORY_DIR.mkdir(parents=True, exist_ok=True)
         path = HISTORY_DIR / f"daily-pulse-{dt.datetime.now():%Y-%m-%d-%H%M%S-%f}.txt"
         path.write_text(body.rstrip() + "\n", encoding="utf-8")
+        self._cleanup_history()
+
+    def _cleanup_history(self) -> None:
+        files = sorted(HISTORY_DIR.glob("daily-pulse-*.txt"))
+        excess = len(files) - self.MAX_HISTORY_FILES
+        if excess > 0:
+            for path in files[:excess]:
+                path.unlink(missing_ok=True)
 
     def history_files(self) -> list[Path]:
         if not HISTORY_DIR.exists():
@@ -1282,10 +1285,10 @@ class DailyPulseApp(tk.Tk):
         self.set_status(f"App 内定时已启动，下一次运行在 {hour:02d}:{minute:02d}。")
 
     def _timer_run(self) -> None:
-        def worker() -> tuple[str, str]:
-            digest = self.generate_digest()
+        def worker() -> tuple[str, str, dict[tuple[str, str], str]]:
+            digest, health = self.generate_digest()
             daily_pulse.send_digest(self.build_config_from_fields(), digest)
-            return ("sent", digest)
+            return ("sent", digest, health)
 
         self.run_background("定时任务正在生成并发送简报...", worker)
         self.schedule_next_run()
