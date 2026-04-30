@@ -1,6 +1,10 @@
+import os
+import time
 import unittest
+import urllib.error
+from unittest.mock import patch
 
-from daily_pulse import Source, parse_rss, substitute_body
+from daily_pulse import Item, Source, build_digest, collect_items, parse_rss, substitute_body
 
 
 class DailyPulseTests(unittest.TestCase):
@@ -34,6 +38,46 @@ class DailyPulseTests(unittest.TestCase):
 
         self.assertEqual(payload["text"]["content"], body)
         self.assertEqual(payload["list"][0], f"prefix {body}")
+
+    def test_collect_items_fetches_concurrently_but_preserves_source_order(self):
+        config = {
+            "max_total_items": 10,
+            "sources": [
+                {"name": "Slow", "url": "https://example.com/slow", "type": "rss"},
+                {"name": "Fast", "url": "https://example.com/fast", "type": "rss"},
+            ],
+        }
+
+        def fake_fetch(source):
+            if source.name == "Slow":
+                time.sleep(0.02)
+            return [Item(title=source.name, url=source.url, source=source.name)], None
+
+        with patch("daily_pulse.fetch_source", side_effect=fake_fetch):
+            items, errors = collect_items(config)
+
+        self.assertEqual(errors, [])
+        self.assertEqual([item.source for item in items], ["Slow", "Fast"])
+
+    def test_build_digest_explains_ai_request_failures(self):
+        config = {
+            "title": "Test Pulse",
+            "summary_words": 120,
+            "ai": {
+                "endpoint": "https://api.example.com/chat/completions",
+                "model": "example-model",
+                "api_key_env": "TEST_AI_KEY",
+            },
+        }
+        items = [Item(title="Hello", url="https://example.com/hello", source="Example", excerpt="World")]
+
+        with patch.dict(os.environ, {"TEST_AI_KEY": "secret"}):
+            with patch("daily_pulse.urllib.request.urlopen", side_effect=urllib.error.URLError("boom")):
+                digest = build_digest(config, items, [])
+
+        self.assertIn("AI 摘要未使用", digest)
+        self.assertIn("AI 请求失败", digest)
+        self.assertIn("Hello", digest)
 
 
 if __name__ == "__main__":

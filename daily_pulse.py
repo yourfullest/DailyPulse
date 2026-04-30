@@ -10,6 +10,7 @@ email, Telegram, or webhook.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import datetime as dt
 import email.message
 import html
@@ -259,12 +260,23 @@ def brief_context(items: list[Item], max_chars: int) -> str:
     return truncate("\n\n".join(blocks), max_chars)
 
 
-def call_ai_summary(config: dict[str, Any], items: list[Item]) -> str | None:
+def describe_http_error(exc: urllib.error.HTTPError) -> str:
+    detail = ""
+    try:
+        detail = exc.read().decode("utf-8", errors="replace")
+    except Exception:
+        detail = ""
+    if detail:
+        return f"HTTP {exc.code}: {truncate(detail, 240)}"
+    return f"HTTP {exc.code}: {exc.reason}"
+
+
+def attempt_ai_summary(config: dict[str, Any], items: list[Item]) -> tuple[str | None, str | None]:
     ai_config = config.get("ai", {})
     api_key_env = ai_config.get("api_key_env", "OPENAI_API_KEY")
     api_key = os.getenv(api_key_env)
     if not api_key:
-        return None
+        return None, f"未配置 AI 密钥环境变量 {api_key_env}"
 
     endpoint = ai_config.get("endpoint", "https://api.openai.com/v1/chat/completions")
     model = ai_config.get("model", "gpt-4o-mini")
@@ -306,21 +318,35 @@ def call_ai_summary(config: dict[str, Any], items: list[Item]) -> str | None:
     try:
         with urllib.request.urlopen(req, timeout=int(ai_config.get("timeout", 60)), context=ssl_context()) as resp:
             body = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        reason = f"AI 请求失败: {describe_http_error(exc)}"
+        print(f"[warn] {reason}，改用本地摘要", file=sys.stderr)
+        return None, reason
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-        print(f"[warn] AI 摘要失败，改用本地摘要: {exc}", file=sys.stderr)
-        return None
+        reason = f"AI 请求失败: {truncate(str(exc), 240)}"
+        print(f"[warn] {reason}，改用本地摘要", file=sys.stderr)
+        return None, reason
 
     try:
-        return body["choices"][0]["message"]["content"].strip()
+        return body["choices"][0]["message"]["content"].strip(), None
     except (KeyError, IndexError, TypeError):
-        print("[warn] AI 返回格式无法识别，改用本地摘要", file=sys.stderr)
-        return None
+        reason = "AI 返回格式无法识别"
+        print(f"[warn] {reason}，改用本地摘要", file=sys.stderr)
+        return None, reason
 
 
-def fallback_summary(config: dict[str, Any], items: list[Item]) -> str:
+def call_ai_summary(config: dict[str, Any], items: list[Item]) -> str | None:
+    summary, _reason = attempt_ai_summary(config, items)
+    return summary
+
+
+def fallback_summary(config: dict[str, Any], items: list[Item], reason: str | None = None) -> str:
     target_words = int(config.get("summary_words", 450))
     max_items = int(config.get("fallback_item_count", 8))
-    intro = f"今日共抓取 {len(items)} 条信息。未配置 AI 密钥，以下为本地提取式简报："
+    if reason:
+        intro = f"今日共抓取 {len(items)} 条信息。AI 摘要未使用（{reason}），以下为本地提取式简报："
+    else:
+        intro = f"今日共抓取 {len(items)} 条信息。以下为本地提取式简报："
     lines = [intro]
     for item in items[:max_items]:
         excerpt = truncate(item.excerpt, 180)
@@ -343,7 +369,9 @@ def render_sources(items: list[Item]) -> str:
 def build_digest(config: dict[str, Any], items: list[Item], errors: list[str]) -> str:
     title = config.get("title", "DailyPulse 个人信息简报")
     today = dt.datetime.now().strftime("%Y-%m-%d")
-    summary = call_ai_summary(config, items) or fallback_summary(config, items)
+    summary, ai_reason = attempt_ai_summary(config, items)
+    if not summary:
+        summary = fallback_summary(config, items, ai_reason)
     parts = [f"{title} | {today}", "", summary]
     if "消息源" not in summary:
         parts.append(render_sources(items))
@@ -446,13 +474,27 @@ def send_digest(config: dict[str, Any], body: str) -> None:
 
 
 def collect_items(config: dict[str, Any]) -> tuple[list[Item], list[str]]:
-    items: list[Item] = []
+    sources = parse_sources(config)
+    if not sources:
+        return [], []
+
+    results: list[list[Item]] = [[] for _source in sources]
     errors: list[str] = []
-    for source in parse_sources(config):
-        source_items, error = fetch_source(source)
-        items.extend(source_items)
-        if error:
-            errors.append(error)
+
+    max_workers = max(1, min(int(config.get("fetch_workers", 8)), len(sources)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_source = {executor.submit(fetch_source, source): (idx, source) for idx, source in enumerate(sources)}
+        for future in concurrent.futures.as_completed(future_to_source):
+            idx, source = future_to_source[future]
+            try:
+                source_items, error = future.result()
+            except Exception as exc:
+                source_items, error = [], f"{source.name}: {exc}"
+            results[idx] = source_items
+            if error:
+                errors.append(error)
+
+    items = [item for source_items in results for item in source_items]
     max_total = int(config.get("max_total_items", 30))
     return items[:max_total], errors
 

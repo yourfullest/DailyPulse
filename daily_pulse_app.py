@@ -168,6 +168,348 @@ class SourceDialog(simpledialog.Dialog):
         }
 
 
+class DeliveryDialog(simpledialog.Dialog):
+    def __init__(
+        self,
+        parent: tk.Misc,
+        title: str,
+        delivery: dict[str, Any],
+        env_data: dict[str, str],
+    ):
+        self.delivery = delivery
+        self.env_data = env_data
+        self.result: dict[str, Any] | None = None
+        self.env_updates: dict[str, str] = {}
+        super().__init__(parent, title)
+
+    def env_value(self, name: str) -> str:
+        return self.env_data.get(name, os.getenv(name, ""))
+
+    def body(self, master: tk.Frame) -> tk.Widget:
+        master.columnconfigure(0, weight=1)
+        notebook = ttk.Notebook(master)
+        notebook.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+
+        self._build_email_tab(notebook)
+        self._build_telegram_tab(notebook)
+        self._build_webhook_tab(notebook)
+        self.test_status_var = tk.StringVar(value="测试发送会使用当前弹窗里的字段。")
+        ttk.Label(master, textvariable=self.test_status_var, style="MutedSurface.TLabel").grid(
+            row=1, column=0, sticky="w", padx=4, pady=(8, 0)
+        )
+        return self.email_host_entry
+
+    def add_entry(
+        self,
+        parent: tk.Frame,
+        row: int,
+        label: str,
+        variable: tk.StringVar,
+        *,
+        show: str | None = None,
+    ) -> ttk.Entry:
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 10), pady=5)
+        entry = ttk.Entry(parent, textvariable=variable, show=show, width=44)
+        entry.grid(row=row, column=1, sticky="ew", pady=5)
+        return entry
+
+    def _build_email_tab(self, notebook: ttk.Notebook) -> None:
+        email = self.delivery.get("email", {})
+        frame = ttk.Frame(notebook, padding=12)
+        frame.columnconfigure(1, weight=1)
+        notebook.add(frame, text="邮件")
+
+        username_env = str(email.get("username_env", "SMTP_USERNAME"))
+        password_env = str(email.get("password_env", "SMTP_PASSWORD"))
+        recipients = email.get("to", [])
+        if isinstance(recipients, str):
+            recipients_text = recipients
+        else:
+            recipients_text = "\n".join(str(item) for item in recipients)
+
+        self.email_enabled_var = tk.BooleanVar(value=bool(email.get("enabled", False)))
+        self.email_host_var = tk.StringVar(value=str(email.get("smtp_host", "smtp.gmail.com")))
+        self.email_port_var = tk.StringVar(value=str(email.get("smtp_port", 465)))
+        self.email_username_env_var = tk.StringVar(value=username_env)
+        self.email_username_var = tk.StringVar(value=self.env_value(username_env))
+        self.email_password_env_var = tk.StringVar(value=password_env)
+        self.email_password_var = tk.StringVar(value=self.env_value(password_env))
+        self.email_from_var = tk.StringVar(value=str(email.get("from", "")))
+
+        ttk.Checkbutton(frame, text="启用邮件发送", variable=self.email_enabled_var).grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8)
+        )
+        self.email_host_entry = self.add_entry(frame, 1, "SMTP Host", self.email_host_var)
+        self.add_entry(frame, 2, "SMTP Port", self.email_port_var)
+        self.add_entry(frame, 3, "用户名变量", self.email_username_env_var)
+        self.add_entry(frame, 4, "SMTP 用户名", self.email_username_var)
+        self.add_entry(frame, 5, "密码变量", self.email_password_env_var)
+        self.add_entry(frame, 6, "SMTP 密码", self.email_password_var, show="*")
+        self.add_entry(frame, 7, "发件人", self.email_from_var)
+        ttk.Label(frame, text="收件人").grid(row=8, column=0, sticky="nw", padx=(0, 10), pady=5)
+        self.email_to_text = tk.Text(frame, width=44, height=4, wrap="word")
+        self.email_to_text.grid(row=8, column=1, sticky="ew", pady=5)
+        self.email_to_text.insert("1.0", recipients_text)
+        ttk.Button(frame, text="测试邮件", command=self.test_email, style="Secondary.TButton").grid(
+            row=9, column=1, sticky="w", pady=(10, 0)
+        )
+
+    def _build_telegram_tab(self, notebook: ttk.Notebook) -> None:
+        telegram = self.delivery.get("telegram", {})
+        frame = ttk.Frame(notebook, padding=12)
+        frame.columnconfigure(1, weight=1)
+        notebook.add(frame, text="Telegram")
+
+        token_env = str(telegram.get("token_env", "TELEGRAM_BOT_TOKEN"))
+        chat_id_env = str(telegram.get("chat_id_env", "TELEGRAM_CHAT_ID"))
+        self.telegram_enabled_var = tk.BooleanVar(value=bool(telegram.get("enabled", False)))
+        self.telegram_token_env_var = tk.StringVar(value=token_env)
+        self.telegram_token_var = tk.StringVar(value=self.env_value(token_env))
+        self.telegram_chat_id_env_var = tk.StringVar(value=chat_id_env)
+        self.telegram_chat_id_var = tk.StringVar(value=self.env_value(chat_id_env))
+
+        ttk.Checkbutton(frame, text="启用 Telegram 发送", variable=self.telegram_enabled_var).grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8)
+        )
+        self.add_entry(frame, 1, "Bot Token 变量", self.telegram_token_env_var)
+        self.add_entry(frame, 2, "Bot Token", self.telegram_token_var, show="*")
+        self.add_entry(frame, 3, "Chat ID 变量", self.telegram_chat_id_env_var)
+        self.add_entry(frame, 4, "Chat ID", self.telegram_chat_id_var)
+        ttk.Button(frame, text="测试 Telegram", command=self.test_telegram, style="Secondary.TButton").grid(
+            row=5, column=1, sticky="w", pady=(10, 0)
+        )
+
+    def _build_webhook_tab(self, notebook: ttk.Notebook) -> None:
+        webhook = self.delivery.get("webhook", {})
+        frame = ttk.Frame(notebook, padding=12)
+        frame.columnconfigure(1, weight=1)
+        notebook.add(frame, text="Webhook")
+
+        url_env = str(webhook.get("url_env", "WEBHOOK_URL"))
+        self.webhook_enabled_var = tk.BooleanVar(value=bool(webhook.get("enabled", False)))
+        self.webhook_url_env_var = tk.StringVar(value=url_env)
+        self.webhook_url_var = tk.StringVar(value=self.env_value(url_env))
+        self.webhook_direct_url_var = tk.StringVar(value=str(webhook.get("url", "")))
+
+        ttk.Checkbutton(frame, text="启用 Webhook 发送", variable=self.webhook_enabled_var).grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8)
+        )
+        self.add_entry(frame, 1, "URL 变量", self.webhook_url_env_var)
+        self.add_entry(frame, 2, "Webhook URL", self.webhook_url_var, show="*")
+        self.add_entry(frame, 3, "备用明文 URL", self.webhook_direct_url_var)
+        ttk.Button(frame, text="测试 Webhook", command=self.test_webhook, style="Secondary.TButton").grid(
+            row=4, column=1, sticky="w", pady=(10, 0)
+        )
+
+    def validate_url(self, value: str, label: str) -> bool:
+        if value and not value.startswith(("http://", "https://")):
+            messagebox.showerror("URL 不正确", f"{label} 需要以 http:// 或 https:// 开头。", parent=self)
+            return False
+        return True
+
+    def validate(self) -> bool:
+        if not self.validate_email_fields(require_enabled=bool(self.email_enabled_var.get())):
+            return False
+        if not self.validate_telegram_fields(require_enabled=bool(self.telegram_enabled_var.get())):
+            return False
+        if not self.validate_webhook_fields(require_enabled=bool(self.webhook_enabled_var.get())):
+            return False
+        return True
+
+    def validate_email_fields(self, *, require_enabled: bool) -> bool:
+        try:
+            port = int(self.email_port_var.get().strip())
+        except ValueError:
+            messagebox.showerror("SMTP Port 不正确", "SMTP Port 需要是整数。", parent=self)
+            return False
+        if port < 1 or port > 65535:
+            messagebox.showerror("SMTP Port 不正确", "SMTP Port 需要在 1 到 65535 之间。", parent=self)
+            return False
+
+        if require_enabled:
+            recipients = self.email_recipients()
+            if not self.email_host_var.get().strip() or not recipients:
+                messagebox.showerror("邮件配置不完整", "启用邮件时需要填写 SMTP Host 和收件人。", parent=self)
+                return False
+            if not self.email_username_var.get().strip() or not self.email_password_var.get().strip():
+                messagebox.showerror("邮件配置不完整", "启用邮件时需要填写 SMTP 用户名和密码。", parent=self)
+                return False
+        return True
+
+    def validate_telegram_fields(self, *, require_enabled: bool) -> bool:
+        if require_enabled:
+            if not self.telegram_token_var.get().strip() or not self.telegram_chat_id_var.get().strip():
+                messagebox.showerror("Telegram 配置不完整", "启用 Telegram 时需要填写 Bot Token 和 Chat ID。", parent=self)
+                return False
+        return True
+
+    def validate_webhook_fields(self, *, require_enabled: bool) -> bool:
+        webhook_url = self.webhook_url_var.get().strip()
+        direct_url = self.webhook_direct_url_var.get().strip()
+        if not self.validate_url(webhook_url, "Webhook URL"):
+            return False
+        if not self.validate_url(direct_url, "备用明文 URL"):
+            return False
+        if require_enabled and not webhook_url and not direct_url:
+            messagebox.showerror("Webhook 配置不完整", "启用 Webhook 时需要填写 Webhook URL。", parent=self)
+            return False
+        return True
+
+    def email_recipients(self) -> list[str]:
+        raw = self.email_to_text.get("1.0", "end").strip()
+        rows = raw.replace(",", "\n").splitlines()
+        return [row.strip() for row in rows if row.strip()]
+
+    def remember_secret(self, env_name: str, value: str) -> None:
+        env_name = env_name.strip()
+        value = value.strip()
+        if env_name and value:
+            self.env_updates[env_name] = value
+
+    def current_delivery_config(self) -> tuple[dict[str, Any], dict[str, str]]:
+        email_username_env = self.email_username_env_var.get().strip() or "SMTP_USERNAME"
+        email_password_env = self.email_password_env_var.get().strip() or "SMTP_PASSWORD"
+        telegram_token_env = self.telegram_token_env_var.get().strip() or "TELEGRAM_BOT_TOKEN"
+        telegram_chat_id_env = self.telegram_chat_id_env_var.get().strip() or "TELEGRAM_CHAT_ID"
+        webhook_url_env = self.webhook_url_env_var.get().strip() or "WEBHOOK_URL"
+
+        result = dict(self.delivery)
+        try:
+            smtp_port = int(self.email_port_var.get().strip())
+        except ValueError:
+            smtp_port = 465
+        result["email"] = {
+            "enabled": bool(self.email_enabled_var.get()),
+            "smtp_host": self.email_host_var.get().strip(),
+            "smtp_port": smtp_port,
+            "username_env": email_username_env,
+            "password_env": email_password_env,
+            "from": self.email_from_var.get().strip(),
+            "to": self.email_recipients(),
+        }
+        telegram = dict(self.delivery.get("telegram", {}))
+        telegram.update(
+            {
+                "enabled": bool(self.telegram_enabled_var.get()),
+                "token_env": telegram_token_env,
+                "chat_id_env": telegram_chat_id_env,
+            }
+        )
+        result["telegram"] = telegram
+
+        webhook = dict(self.delivery.get("webhook", {}))
+        webhook.update(
+            {
+                "enabled": bool(self.webhook_enabled_var.get()),
+                "url_env": webhook_url_env,
+                "url": self.webhook_direct_url_var.get().strip(),
+            }
+        )
+        result["webhook"] = webhook
+
+        env_updates: dict[str, str] = {}
+        for env_name, value in (
+            (email_username_env, self.email_username_var.get()),
+            (email_password_env, self.email_password_var.get()),
+            (telegram_token_env, self.telegram_token_var.get()),
+            (telegram_chat_id_env, self.telegram_chat_id_var.get()),
+            (webhook_url_env, self.webhook_url_var.get()),
+        ):
+            env_name = env_name.strip()
+            value = value.strip()
+            if env_name and value:
+                env_updates[env_name] = value
+        return result, env_updates
+
+    def apply(self) -> None:
+        self.result, self.env_updates = self.current_delivery_config()
+
+    def run_with_env(self, updates: dict[str, str], worker: Callable[[], None]) -> None:
+        previous = {key: os.environ.get(key) for key in updates}
+        try:
+            os.environ.update(updates)
+            worker()
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def run_test(self, label: str, worker: Callable[[], None]) -> None:
+        self.test_status_var.set(f"正在测试 {label}...")
+
+        def target() -> None:
+            try:
+                worker()
+            except Exception as exc:
+                self.after(0, lambda: self.finish_test(label, exc))
+            else:
+                self.after(0, lambda: self.finish_test(label, None))
+
+        threading.Thread(target=target, daemon=True).start()
+
+    def finish_test(self, label: str, error: Exception | None) -> None:
+        if error:
+            self.test_status_var.set(f"{label} 测试失败。")
+            messagebox.showerror(f"{label} 测试失败", str(error), parent=self)
+            return
+        self.test_status_var.set(f"{label} 测试已发送。")
+        messagebox.showinfo(f"{label} 测试已发送", "测试消息已经提交给发送渠道。", parent=self)
+
+    def test_email(self) -> None:
+        if not self.validate_email_fields(require_enabled=True):
+            return
+        delivery, env_updates = self.current_delivery_config()
+        delivery["email"]["enabled"] = True
+
+        def worker() -> None:
+            self.run_with_env(
+                env_updates,
+                lambda: daily_pulse.send_email(
+                    {"delivery": delivery},
+                    "DailyPulse 测试邮件",
+                    f"DailyPulse 测试邮件发送成功。\n\n时间: {dt.datetime.now():%Y-%m-%d %H:%M:%S}",
+                ),
+            )
+
+        self.run_test("邮件", worker)
+
+    def test_telegram(self) -> None:
+        if not self.validate_telegram_fields(require_enabled=True):
+            return
+        delivery, env_updates = self.current_delivery_config()
+        delivery["telegram"]["enabled"] = True
+
+        def worker() -> None:
+            self.run_with_env(
+                env_updates,
+                lambda: daily_pulse.send_telegram(
+                    {"delivery": delivery},
+                    f"DailyPulse Telegram 测试发送成功。\n时间: {dt.datetime.now():%Y-%m-%d %H:%M:%S}",
+                ),
+            )
+
+        self.run_test("Telegram", worker)
+
+    def test_webhook(self) -> None:
+        if not self.validate_webhook_fields(require_enabled=True):
+            return
+        delivery, env_updates = self.current_delivery_config()
+        delivery["webhook"]["enabled"] = True
+
+        def worker() -> None:
+            self.run_with_env(
+                env_updates,
+                lambda: daily_pulse.send_webhook(
+                    {"delivery": delivery},
+                    f"DailyPulse Webhook 测试发送成功。\n时间: {dt.datetime.now():%Y-%m-%d %H:%M:%S}",
+                ),
+            )
+
+        self.run_test("Webhook", worker)
+
+
 class DailyPulseApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -178,6 +520,7 @@ class DailyPulseApp(tk.Tk):
 
         self.config_data = load_config()
         self.env_data = read_env()
+        self.pending_env_updates: dict[str, str] = {}
         self.sources: list[dict[str, Any]] = list(self.config_data.get("sources", []))
         self.worker_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         self.current_digest = ""
@@ -346,7 +689,10 @@ class DailyPulseApp(tk.Tk):
         delivery_row.grid(row=len(settings), column=1, sticky="w", pady=(12, 5))
         ttk.Checkbutton(delivery_row, text="邮件", variable=self.email_enabled_var).grid(row=0, column=0, padx=(0, 12))
         ttk.Checkbutton(delivery_row, text="Telegram", variable=self.telegram_enabled_var).grid(row=0, column=1, padx=(0, 12))
-        ttk.Checkbutton(delivery_row, text="Webhook", variable=self.webhook_enabled_var).grid(row=0, column=2)
+        ttk.Checkbutton(delivery_row, text="Webhook", variable=self.webhook_enabled_var).grid(row=0, column=2, padx=(0, 12))
+        ttk.Button(delivery_row, text="配置...", command=self.open_delivery_settings, style="Secondary.TButton").grid(
+            row=0, column=3
+        )
 
         action_row = ttk.Frame(settings_box)
         action_row.grid(row=len(settings) + 1, column=0, columnspan=2, sticky="ew", pady=(16, 0))
@@ -498,6 +844,23 @@ class DailyPulseApp(tk.Tk):
         config["delivery"] = delivery
         return config
 
+    def open_delivery_settings(self) -> None:
+        try:
+            config = self.build_config_from_fields()
+        except ValueError as exc:
+            messagebox.showerror("配置不正确", f"请检查数字字段：{exc}", parent=self)
+            return
+        dialog = DeliveryDialog(self, "发送渠道配置", config.get("delivery", {}), self.env_data | self.pending_env_updates)
+        if dialog.result is None:
+            return
+        self.config_data = dict(self.config_data)
+        self.config_data["delivery"] = dialog.result
+        self.pending_env_updates.update(dialog.env_updates)
+        self.email_enabled_var.set(bool(dialog.result.get("email", {}).get("enabled", False)))
+        self.telegram_enabled_var.set(bool(dialog.result.get("telegram", {}).get("enabled", False)))
+        self.webhook_enabled_var.set(bool(dialog.result.get("webhook", {}).get("enabled", False)))
+        self.set_status("已更新发送渠道配置，记得保存配置。")
+
     def save_all(self) -> bool:
         try:
             config = self.build_config_from_fields()
@@ -508,8 +871,12 @@ class DailyPulseApp(tk.Tk):
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         CONFIG_PATH.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         key_name = config.get("ai", {}).get("api_key_env", "DEEPSEEK_API_KEY")
-        write_env({key_name: self.api_key_var.get().strip()})
-        os.environ[key_name] = self.api_key_var.get().strip()
+        env_updates = dict(self.pending_env_updates)
+        env_updates[key_name] = self.api_key_var.get().strip()
+        write_env(env_updates)
+        for env_key, env_value in env_updates.items():
+            os.environ[env_key] = env_value
+        self.pending_env_updates.clear()
         self.config_data = config
         self.env_data = read_env()
         self.model_badge_var.set(f"模型 {config.get('ai', {}).get('model', '未配置')}")
