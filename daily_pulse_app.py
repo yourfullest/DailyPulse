@@ -2,7 +2,7 @@
 """
 DailyPulse desktop app.
 
-A small Tkinter GUI for editing sources, configuring DeepSeek/OpenAI-compatible
+A CustomTkinter GUI for editing sources, configuring DeepSeek/OpenAI-compatible
 AI settings, previewing digests, and sending them without touching JSON by hand.
 """
 
@@ -20,8 +20,10 @@ import urllib.error
 import urllib.request
 import webbrowser
 from pathlib import Path
-from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
+from tkinter import filedialog, messagebox
 from typing import Any, Callable
+
+import customtkinter as ctk
 
 import daily_pulse
 
@@ -52,21 +54,23 @@ HISTORY_DIR = APP_DATA_DIR / "history"
 ASSET_ROOT = RESOURCE_ROOT / "assets"
 APP_ICON_PNG = ASSET_ROOT / "DailyPulse.png"
 
-BG = "#f4f7f4"
-SURFACE = "#ffffff"
-SURFACE_ALT = "#f7faf7"
-TEXT = "#1d2733"
-MUTED = "#66746f"
-BORDER = "#d6e0dc"
-ACCENT = "#0f8f8c"
-ACCENT_DARK = "#0a6666"
-TEAL = "#138a7e"
-CORAL = "#f16f51"
-MINT_SOFT = "#dff6ef"
-SKY_SOFT = "#e3f1ff"
-CORAL_SOFT = "#ffe7df"
-STATUS_BG = "#edf4ef"
-OUTPUT_BG = "#fbfcf8"
+# ── cc-switch dark theme palette ──
+BG = "#1e1e24"
+BG_CARD = "#27272e"
+BG_INPUT = "#333340"
+BG_SELECTED = "#3b3b48"
+BG_SIDEBAR = "#1a1a20"
+BORDER = "#3a3a44"
+TEXT = "#f0f0f5"
+TEXT_DIM = "#9ca3af"
+TEXT_MUTED = "#6b7280"
+ACCENT = "#3b82f6"
+ACCENT_HOVER = "#60a5fa"
+SUCCESS = "#22c55e"
+ERROR = "#ef4444"
+WARNING = "#f59e0b"
+ORANGE = "#f97316"
+ORANGE_HOVER = "#fb923c"
 
 
 def parse_version(value: str) -> tuple[int, ...]:
@@ -169,455 +173,329 @@ def load_config() -> dict[str, Any]:
     }
 
 
-class SourceDialog(simpledialog.Dialog):
-    def __init__(self, parent: tk.Misc, title: str, source: dict[str, Any] | None = None):
+# ──────────────────────────────────────────────
+#  CustomTkinter dialogs
+# ──────────────────────────────────────────────
+
+class SourceDialog(ctk.CTkToplevel):
+    def __init__(self, parent, title: str, source: dict[str, Any] | None = None):
+        super().__init__(parent)
+        self.title(title)
+        self.geometry("480x300")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+
         self.source = source or {"name": "", "type": "rss", "url": "", "limit": 5}
         self.result: dict[str, Any] | None = None
-        super().__init__(parent, title)
 
-    def body(self, master: tk.Frame) -> tk.Widget:
         self.name_var = tk.StringVar(value=str(self.source.get("name", "")))
         self.type_var = tk.StringVar(value=str(self.source.get("type", "rss")))
         self.url_var = tk.StringVar(value=str(self.source.get("url", "")))
         self.limit_var = tk.StringVar(value=str(self.source.get("limit", 5)))
 
-        fields = [
-            ("名称", ttk.Entry(master, textvariable=self.name_var, width=42)),
-            ("类型", ttk.Combobox(master, textvariable=self.type_var, values=("rss", "web"), state="readonly", width=39)),
-            ("URL", ttk.Entry(master, textvariable=self.url_var, width=42)),
-            ("条数", ttk.Entry(master, textvariable=self.limit_var, width=42)),
-        ]
-        for row, (label, widget) in enumerate(fields):
-            ttk.Label(master, text=label).grid(row=row, column=0, sticky="w", padx=(0, 10), pady=6)
-            widget.grid(row=row, column=1, sticky="ew", pady=6)
-        master.columnconfigure(1, weight=1)
-        return fields[0][1]
+        frame = ctk.CTkFrame(self, fg_color=BG)
+        frame.pack(fill="both", expand=True, padx=20, pady=16)
+        frame.columnconfigure(1, weight=1)
 
-    def validate(self) -> bool:
+        labels = ["名称", "类型", "URL", "条数"]
+        for i, lbl in enumerate(labels):
+            ctk.CTkLabel(frame, text=lbl, text_color=TEXT_DIM,
+                         font=ctk.CTkFont(size=12)).grid(row=i, column=0, sticky="w", padx=(0, 12), pady=8)
+
+        ctk.CTkEntry(frame, textvariable=self.name_var, width=300,
+                     fg_color=BG_INPUT, text_color=TEXT,
+                     border_color=BORDER).grid(row=0, column=1, sticky="ew", pady=8)
+
+        ctk.CTkComboBox(frame, variable=self.type_var, values=["rss", "web"],
+                        fg_color=BG_INPUT, text_color=TEXT,
+                        border_color=BORDER, width=300,
+                        button_color=ACCENT, dropdown_fg_color=BG_CARD).grid(row=1, column=1, sticky="ew", pady=8)
+
+        ctk.CTkEntry(frame, textvariable=self.url_var, width=300,
+                     fg_color=BG_INPUT, text_color=TEXT,
+                     border_color=BORDER).grid(row=2, column=1, sticky="ew", pady=8)
+
+        ctk.CTkEntry(frame, textvariable=self.limit_var, width=300,
+                     fg_color=BG_INPUT, text_color=TEXT,
+                     border_color=BORDER).grid(row=3, column=1, sticky="ew", pady=8)
+
+        btn_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        btn_frame.grid(row=4, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        ctk.CTkButton(btn_frame, text="取消", width=80, fg_color=BG_INPUT,
+                      hover_color="#44444e", command=self._cancel).pack(side="right", padx=(6, 0))
+        ctk.CTkButton(btn_frame, text="确定", width=80, fg_color=ACCENT,
+                      hover_color=ACCENT_HOVER, command=self._ok).pack(side="right")
+
+    def _ok(self) -> None:
         if not self.name_var.get().strip():
             messagebox.showerror("缺少名称", "请填写信息源名称。", parent=self)
-            return False
+            return
         if not self.url_var.get().strip().startswith(("http://", "https://")):
             messagebox.showerror("URL 不正确", "URL 需要以 http:// 或 https:// 开头。", parent=self)
-            return False
+            return
         try:
             limit = int(self.limit_var.get())
         except ValueError:
             messagebox.showerror("条数不正确", "条数需要是整数。", parent=self)
-            return False
+            return
         if limit < 1:
             messagebox.showerror("条数不正确", "条数至少为 1。", parent=self)
-            return False
-        return True
-
-    def apply(self) -> None:
+            return
         self.result = {
             "name": self.name_var.get().strip(),
             "type": self.type_var.get().strip(),
             "url": self.url_var.get().strip(),
-            "limit": int(self.limit_var.get()),
+            "limit": limit,
         }
+        self.destroy()
+
+    def _cancel(self) -> None:
+        self.result = None
+        self.destroy()
 
 
-class DeliveryDialog(simpledialog.Dialog):
-    def __init__(
-        self,
-        parent: tk.Misc,
-        title: str,
-        delivery: dict[str, Any],
-        env_data: dict[str, str],
-    ):
+class DeliveryDialog(ctk.CTkToplevel):
+    def __init__(self, parent, title: str, delivery: dict[str, Any], env_data: dict[str, str]):
+        super().__init__(parent)
+        self.title(title)
+        self.geometry("560x440")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+
         self.delivery = delivery
         self.env_data = env_data
         self.result: dict[str, Any] | None = None
         self.env_updates: dict[str, str] = {}
-        super().__init__(parent, title)
+        self._env_vars: dict[str, tk.StringVar] = {}
 
-    def env_value(self, name: str) -> str:
-        return self.env_data.get(name, os.getenv(name, ""))
+        frame = ctk.CTkFrame(self, fg_color=BG)
+        frame.pack(fill="both", expand=True, padx=16, pady=16)
 
-    def body(self, master: tk.Frame) -> tk.Widget:
-        master.columnconfigure(0, weight=1)
-        notebook = ttk.Notebook(master)
-        notebook.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        tabview = ctk.CTkTabview(frame, fg_color=BG_CARD,
+                                 segmented_button_fg_color=BG_INPUT,
+                                 segmented_button_selected_color=ACCENT,
+                                 segmented_button_selected_hover_color=ACCENT_HOVER,
+                                 segmented_button_unselected_color=BG_INPUT,
+                                 text_color=TEXT)
+        tabview.pack(fill="both", expand=True)
 
-        self._build_email_tab(notebook)
-        self._build_telegram_tab(notebook)
-        self._build_webhook_tab(notebook)
-        self.test_status_var = tk.StringVar(value="测试发送会使用当前弹窗里的字段。")
-        ttk.Label(master, textvariable=self.test_status_var, style="MutedSurface.TLabel").grid(
-            row=1, column=0, sticky="w", padx=4, pady=(8, 0)
-        )
-        return self.email_host_entry
+        email_tab = tabview.add("邮件")
+        telegram_tab = tabview.add("Telegram")
+        webhook_tab = tabview.add("Webhook")
 
-    def add_entry(
-        self,
-        parent: tk.Frame,
-        row: int,
-        label: str,
-        variable: tk.StringVar,
-        *,
-        show: str | None = None,
-    ) -> ttk.Entry:
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 10), pady=5)
-        entry = ttk.Entry(parent, textvariable=variable, show=show, width=44)
-        entry.grid(row=row, column=1, sticky="ew", pady=5)
-        return entry
+        self._build_email_tab(email_tab)
+        self._build_telegram_tab(telegram_tab)
+        self._build_webhook_tab(webhook_tab)
 
-    def _build_email_tab(self, notebook: ttk.Notebook) -> None:
+        # Bottom buttons
+        btn_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        btn_frame.pack(fill="x", pady=(12, 0))
+        ctk.CTkButton(btn_frame, text="取消", width=80, fg_color=BG_INPUT,
+                      hover_color="#44444e", command=self._cancel).pack(side="right", padx=(6, 0))
+        ctk.CTkButton(btn_frame, text="确定", width=80, fg_color=ACCENT,
+                      hover_color=ACCENT_HOVER, command=self._ok).pack(side="right")
+
+    def _labeled_entry(self, parent, label: str, var: tk.StringVar, row: int, show: str | None = None):
+        ctk.CTkLabel(parent, text=label, text_color=TEXT_DIM,
+                     font=ctk.CTkFont(size=12)).grid(row=row, column=0, sticky="w", padx=(0, 10), pady=6)
+        ctk.CTkEntry(parent, textvariable=var, fg_color=BG_INPUT, text_color=TEXT,
+                     border_color=BORDER, show=show if show else "").grid(row=row, column=1, sticky="ew", pady=6)
+
+    def _env_entry(self, parent, label: str, env_key: str, row: int, show: str | None = None) -> None:
+        var = tk.StringVar(value=self.env_data.get(env_key, ""))
+        self._env_vars[env_key] = var
+        self._labeled_entry(parent, label, var, row, show)
+
+    def _build_email_tab(self, parent) -> None:
+        parent.columnconfigure(1, weight=1)
         email = self.delivery.get("email", {})
-        frame = ttk.Frame(notebook, padding=12)
-        frame.columnconfigure(1, weight=1)
-        notebook.add(frame, text="邮件")
 
-        username_env = str(email.get("username_env", "SMTP_USERNAME"))
-        password_env = str(email.get("password_env", "SMTP_PASSWORD"))
-        recipients = email.get("to", [])
-        if isinstance(recipients, str):
-            recipients_text = recipients
-        else:
-            recipients_text = "\n".join(str(item) for item in recipients)
+        self.email_enabled = tk.BooleanVar(value=bool(email.get("enabled")))
+        ctk.CTkCheckBox(parent, text="启用邮件发送", variable=self.email_enabled,
+                        fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                        checkmark_color="#ffffff").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
-        self.email_enabled_var = tk.BooleanVar(value=bool(email.get("enabled", False)))
-        self.email_host_var = tk.StringVar(value=str(email.get("smtp_host", "smtp.gmail.com")))
+        self.email_host_var = tk.StringVar(value=email.get("smtp_host", ""))
         self.email_port_var = tk.StringVar(value=str(email.get("smtp_port", 465)))
-        self.email_username_env_var = tk.StringVar(value=username_env)
-        self.email_username_var = tk.StringVar(value=self.env_value(username_env))
-        self.email_password_env_var = tk.StringVar(value=password_env)
-        self.email_password_var = tk.StringVar(value=self.env_value(password_env))
-        self.email_from_var = tk.StringVar(value=str(email.get("from", "")))
+        self.email_from_var = tk.StringVar(value=email.get("from", ""))
 
-        ttk.Checkbutton(frame, text="启用邮件发送", variable=self.email_enabled_var).grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8)
-        )
-        self.email_host_entry = self.add_entry(frame, 1, "SMTP Host", self.email_host_var)
-        self.add_entry(frame, 2, "SMTP Port", self.email_port_var)
-        self.add_entry(frame, 3, "用户名变量", self.email_username_env_var)
-        self.add_entry(frame, 4, "SMTP 用户名", self.email_username_var)
-        self.add_entry(frame, 5, "密码变量", self.email_password_env_var)
-        self.add_entry(frame, 6, "SMTP 密码", self.email_password_var, show="*")
-        self.add_entry(frame, 7, "发件人", self.email_from_var)
-        ttk.Label(frame, text="收件人").grid(row=8, column=0, sticky="nw", padx=(0, 10), pady=5)
-        self.email_to_text = tk.Text(frame, width=44, height=4, wrap="word")
-        self.email_to_text.grid(row=8, column=1, sticky="ew", pady=5)
+        self._labeled_entry(parent, "SMTP 主机", self.email_host_var, 1)
+        self._labeled_entry(parent, "SMTP 端口", self.email_port_var, 2)
+        self._labeled_entry(parent, "发件人", self.email_from_var, 3)
+        self._env_entry(parent, "SMTP 用户名", "SMTP_USERNAME", 4)
+        self._env_entry(parent, "SMTP 密码", "SMTP_PASSWORD", 5, show="*")
+
+        ctk.CTkLabel(parent, text="收件人", text_color=TEXT_DIM,
+                     font=ctk.CTkFont(size=12)).grid(row=6, column=0, sticky="nw", padx=(0, 10), pady=6)
+        recipients = email.get("to", [])
+        recipients_text = "\n".join(recipients) if isinstance(recipients, list) else str(recipients)
+        self.email_to_text = ctk.CTkTextbox(parent, height=60, fg_color=BG_INPUT, text_color=TEXT,
+                                            border_color=BORDER, border_width=1)
+        self.email_to_text.grid(row=6, column=1, sticky="ew", pady=6)
         self.email_to_text.insert("1.0", recipients_text)
-        ttk.Button(frame, text="测试邮件", command=self.test_email, style="Secondary.TButton").grid(
-            row=9, column=1, sticky="w", pady=(10, 0)
-        )
 
-    def _build_telegram_tab(self, notebook: ttk.Notebook) -> None:
+        ctk.CTkButton(parent, text="测试邮件", width=100, fg_color=ACCENT,
+                      hover_color=ACCENT_HOVER,
+                      command=self.test_email).grid(row=7, column=1, sticky="w", pady=(8, 0))
+
+    def _build_telegram_tab(self, parent) -> None:
+        parent.columnconfigure(1, weight=1)
         telegram = self.delivery.get("telegram", {})
-        frame = ttk.Frame(notebook, padding=12)
-        frame.columnconfigure(1, weight=1)
-        notebook.add(frame, text="Telegram")
 
-        token_env = str(telegram.get("token_env", "TELEGRAM_BOT_TOKEN"))
-        chat_id_env = str(telegram.get("chat_id_env", "TELEGRAM_CHAT_ID"))
-        self.telegram_enabled_var = tk.BooleanVar(value=bool(telegram.get("enabled", False)))
-        self.telegram_token_env_var = tk.StringVar(value=token_env)
-        self.telegram_token_var = tk.StringVar(value=self.env_value(token_env))
-        self.telegram_chat_id_env_var = tk.StringVar(value=chat_id_env)
-        self.telegram_chat_id_var = tk.StringVar(value=self.env_value(chat_id_env))
+        self.telegram_enabled = tk.BooleanVar(value=bool(telegram.get("enabled")))
+        ctk.CTkCheckBox(parent, text="启用 Telegram 推送", variable=self.telegram_enabled,
+                        fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                        checkmark_color="#ffffff").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
-        ttk.Checkbutton(frame, text="启用 Telegram 发送", variable=self.telegram_enabled_var).grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8)
-        )
-        self.add_entry(frame, 1, "Bot Token 变量", self.telegram_token_env_var)
-        self.add_entry(frame, 2, "Bot Token", self.telegram_token_var, show="*")
-        self.add_entry(frame, 3, "Chat ID 变量", self.telegram_chat_id_env_var)
-        self.add_entry(frame, 4, "Chat ID", self.telegram_chat_id_var)
-        ttk.Button(frame, text="测试 Telegram", command=self.test_telegram, style="Secondary.TButton").grid(
-            row=5, column=1, sticky="w", pady=(10, 0)
-        )
+        self._env_entry(parent, "Bot Token", "TELEGRAM_BOT_TOKEN", 1, show="*")
+        self._env_entry(parent, "Chat ID", "TELEGRAM_CHAT_ID", 2)
 
-    def _build_webhook_tab(self, notebook: ttk.Notebook) -> None:
+        ctk.CTkButton(parent, text="测试 Telegram", width=100, fg_color=ACCENT,
+                      hover_color=ACCENT_HOVER,
+                      command=self.test_telegram).grid(row=3, column=1, sticky="w", pady=(8, 0))
+
+    def _build_webhook_tab(self, parent) -> None:
+        parent.columnconfigure(1, weight=1)
         webhook = self.delivery.get("webhook", {})
-        frame = ttk.Frame(notebook, padding=12)
-        frame.columnconfigure(1, weight=1)
-        notebook.add(frame, text="Webhook")
 
-        url_env = str(webhook.get("url_env", "WEBHOOK_URL"))
-        self.webhook_enabled_var = tk.BooleanVar(value=bool(webhook.get("enabled", False)))
-        self.webhook_url_env_var = tk.StringVar(value=url_env)
-        self.webhook_url_var = tk.StringVar(value=self.env_value(url_env))
-        self.webhook_direct_url_var = tk.StringVar(value=str(webhook.get("url", "")))
+        self.webhook_enabled = tk.BooleanVar(value=bool(webhook.get("enabled")))
+        self.webhook_url_var = tk.StringVar(value=webhook.get("url", ""))
+        self.webhook_url_env_var = tk.StringVar(value=webhook.get("url_env", "WEBHOOK_URL"))
 
-        ttk.Checkbutton(frame, text="启用 Webhook 发送", variable=self.webhook_enabled_var).grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8)
-        )
-        self.add_entry(frame, 1, "URL 变量", self.webhook_url_env_var)
-        self.add_entry(frame, 2, "Webhook URL", self.webhook_url_var, show="*")
-        self.add_entry(frame, 3, "备用明文 URL", self.webhook_direct_url_var)
-        ttk.Button(frame, text="测试 Webhook", command=self.test_webhook, style="Secondary.TButton").grid(
-            row=4, column=1, sticky="w", pady=(10, 0)
-        )
+        ctk.CTkCheckBox(parent, text="启用 Webhook 发送", variable=self.webhook_enabled,
+                        fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                        checkmark_color="#ffffff").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
-    def validate_url(self, value: str, label: str) -> bool:
-        if value and not value.startswith(("http://", "https://")):
-            messagebox.showerror("URL 不正确", f"{label} 需要以 http:// 或 https:// 开头。", parent=self)
-            return False
-        return True
+        self._labeled_entry(parent, "URL", self.webhook_url_var, 1)
+        self._labeled_entry(parent, "URL 环境变量名", self.webhook_url_env_var, 2)
+        self._env_entry(parent, "URL 环境变量值", "WEBHOOK_URL", 3)
 
-    def validate(self) -> bool:
-        if not self.validate_email_fields(require_enabled=bool(self.email_enabled_var.get())):
-            return False
-        if not self.validate_telegram_fields(require_enabled=bool(self.telegram_enabled_var.get())):
-            return False
-        if not self.validate_webhook_fields(require_enabled=bool(self.webhook_enabled_var.get())):
-            return False
-        return True
+        ctk.CTkLabel(parent, text="自定义 Payload (JSON, 用 ${body} 占位)",
+                     text_color=TEXT_DIM, font=ctk.CTkFont(size=12)).grid(
+            row=4, column=0, columnspan=2, sticky="w", pady=(10, 4))
+        self.webhook_payload_text = ctk.CTkTextbox(parent, height=100, fg_color=BG_INPUT, text_color=TEXT,
+                                                    border_color=BORDER, border_width=1)
+        self.webhook_payload_text.grid(row=5, column=0, columnspan=2, sticky="ew")
+        payload = webhook.get("payload")
+        if payload:
+            self.webhook_payload_text.insert("1.0", json.dumps(payload, ensure_ascii=False, indent=2))
 
-    def validate_email_fields(self, *, require_enabled: bool) -> bool:
-        try:
-            port = int(self.email_port_var.get().strip())
-        except ValueError:
-            messagebox.showerror("SMTP Port 不正确", "SMTP Port 需要是整数。", parent=self)
-            return False
-        if port < 1 or port > 65535:
-            messagebox.showerror("SMTP Port 不正确", "SMTP Port 需要在 1 到 65535 之间。", parent=self)
-            return False
+        ctk.CTkButton(parent, text="测试 Webhook", width=100, fg_color=ACCENT,
+                      hover_color=ACCENT_HOVER,
+                      command=self.test_webhook).grid(row=6, column=1, sticky="w", pady=(8, 0))
 
-        if require_enabled:
-            recipients = self.email_recipients()
-            if not self.email_host_var.get().strip() or not recipients:
-                messagebox.showerror("邮件配置不完整", "启用邮件时需要填写 SMTP Host 和收件人。", parent=self)
-                return False
-            if not self.email_username_var.get().strip() or not self.email_password_var.get().strip():
-                messagebox.showerror("邮件配置不完整", "启用邮件时需要填写 SMTP 用户名和密码。", parent=self)
-                return False
-        return True
+    def _collect(self) -> dict[str, Any]:
+        def _split_recipients() -> list[str]:
+            raw = self.email_to_text.get("1.0", "end").strip()
+            return [line.strip() for line in raw.splitlines() if line.strip()]
 
-    def validate_telegram_fields(self, *, require_enabled: bool) -> bool:
-        if require_enabled:
-            if not self.telegram_token_var.get().strip() or not self.telegram_chat_id_var.get().strip():
-                messagebox.showerror("Telegram 配置不完整", "启用 Telegram 时需要填写 Bot Token 和 Chat ID。", parent=self)
-                return False
-        return True
+        payload_raw = self.webhook_payload_text.get("1.0", "end").strip()
+        payload = json.loads(payload_raw) if payload_raw else None
 
-    def validate_webhook_fields(self, *, require_enabled: bool) -> bool:
-        webhook_url = self.webhook_url_var.get().strip()
-        direct_url = self.webhook_direct_url_var.get().strip()
-        if not self.validate_url(webhook_url, "Webhook URL"):
-            return False
-        if not self.validate_url(direct_url, "备用明文 URL"):
-            return False
-        if require_enabled and not webhook_url and not direct_url:
-            messagebox.showerror("Webhook 配置不完整", "启用 Webhook 时需要填写 Webhook URL。", parent=self)
-            return False
-        return True
-
-    def email_recipients(self) -> list[str]:
-        raw = self.email_to_text.get("1.0", "end").strip()
-        rows = raw.replace(",", "\n").splitlines()
-        return [row.strip() for row in rows if row.strip()]
-
-    def current_delivery_config(self) -> tuple[dict[str, Any], dict[str, str]]:
-        email_username_env = self.email_username_env_var.get().strip() or "SMTP_USERNAME"
-        email_password_env = self.email_password_env_var.get().strip() or "SMTP_PASSWORD"
-        telegram_token_env = self.telegram_token_env_var.get().strip() or "TELEGRAM_BOT_TOKEN"
-        telegram_chat_id_env = self.telegram_chat_id_env_var.get().strip() or "TELEGRAM_CHAT_ID"
-        webhook_url_env = self.webhook_url_env_var.get().strip() or "WEBHOOK_URL"
-
-        result = dict(self.delivery)
-        try:
-            smtp_port = int(self.email_port_var.get().strip())
-        except ValueError:
-            smtp_port = 465
-        result["email"] = {
-            "enabled": bool(self.email_enabled_var.get()),
-            "smtp_host": self.email_host_var.get().strip(),
-            "smtp_port": smtp_port,
-            "username_env": email_username_env,
-            "password_env": email_password_env,
-            "from": self.email_from_var.get().strip(),
-            "to": self.email_recipients(),
+        return {
+            "email": {
+                "enabled": self.email_enabled.get(),
+                "smtp_host": self.email_host_var.get().strip(),
+                "smtp_port": int(self.email_port_var.get().strip() or "465"),
+                "from": self.email_from_var.get().strip(),
+                "username_env": "SMTP_USERNAME",
+                "password_env": "SMTP_PASSWORD",
+                "to": _split_recipients(),
+            },
+            "telegram": {
+                "enabled": self.telegram_enabled.get(),
+                "token_env": "TELEGRAM_BOT_TOKEN",
+                "chat_id_env": "TELEGRAM_CHAT_ID",
+            },
+            "webhook": {
+                "enabled": self.webhook_enabled.get(),
+                "url": self.webhook_url_var.get().strip(),
+                "url_env": self.webhook_url_env_var.get().strip() or "WEBHOOK_URL",
+                "payload": payload,
+            },
         }
-        telegram = dict(self.delivery.get("telegram", {}))
-        telegram.update(
-            {
-                "enabled": bool(self.telegram_enabled_var.get()),
-                "token_env": telegram_token_env,
-                "chat_id_env": telegram_chat_id_env,
-            }
-        )
-        result["telegram"] = telegram
 
-        webhook = dict(self.delivery.get("webhook", {}))
-        webhook.update(
-            {
-                "enabled": bool(self.webhook_enabled_var.get()),
-                "url_env": webhook_url_env,
-                "url": self.webhook_direct_url_var.get().strip(),
-            }
-        )
-        result["webhook"] = webhook
-
-        env_updates: dict[str, str] = {}
-        for env_name, value in (
-            (email_username_env, self.email_username_var.get()),
-            (email_password_env, self.email_password_var.get()),
-            (telegram_token_env, self.telegram_token_var.get()),
-            (telegram_chat_id_env, self.telegram_chat_id_var.get()),
-            (webhook_url_env, self.webhook_url_var.get()),
-        ):
-            env_name = env_name.strip()
-            value = value.strip()
-            if env_name and value:
-                env_updates[env_name] = value
-        return result, env_updates
-
-    def apply(self) -> None:
-        self.result, self.env_updates = self.current_delivery_config()
-
-    def run_test(self, label: str, env_updates: dict[str, str], worker: Callable[[], None]) -> None:
-        self.test_status_var.set(f"正在测试 {label}...")
-        previous = {key: os.environ.get(key) for key in env_updates}
-        os.environ.update(env_updates)
-
-        def target() -> None:
-            try:
-                worker()
-            except Exception as exc:
-                self.after(0, lambda: self.finish_test(label, exc, previous))
-            else:
-                self.after(0, lambda: self.finish_test(label, None, previous))
-
-        threading.Thread(target=target, daemon=True).start()
-
-    def restore_env(self, previous: dict[str, str | None]) -> None:
-        for key, value in previous.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-
-    def finish_test(self, label: str, error: Exception | None, previous_env: dict[str, str | None]) -> None:
-        self.restore_env(previous_env)
-        if error:
-            self.test_status_var.set(f"{label} 测试失败。")
-            messagebox.showerror(f"{label} 测试失败", str(error), parent=self)
+    def _ok(self) -> None:
+        try:
+            self.result = self._collect()
+        except json.JSONDecodeError as exc:
+            messagebox.showerror("JSON 错误", f"自定义 payload 格式错误：{exc}", parent=self)
             return
-        self.test_status_var.set(f"{label} 测试已发送。")
-        messagebox.showinfo(f"{label} 测试已发送", "测试消息已经提交给发送渠道。", parent=self)
-
-    def test_email(self) -> None:
-        if not self.validate_email_fields(require_enabled=True):
+        except ValueError as exc:
+            messagebox.showerror("值错误", str(exc), parent=self)
             return
-        delivery, env_updates = self.current_delivery_config()
-        delivery["email"]["enabled"] = True
-
-        def worker() -> None:
-            daily_pulse.send_email(
-                {"delivery": delivery},
-                "DailyPulse 测试邮件",
-                f"DailyPulse 测试邮件发送成功。\n\n时间: {dt.datetime.now():%Y-%m-%d %H:%M:%S}",
-            )
-
-        self.run_test("邮件", env_updates, worker)
-
-    def test_telegram(self) -> None:
-        if not self.validate_telegram_fields(require_enabled=True):
-            return
-        delivery, env_updates = self.current_delivery_config()
-        delivery["telegram"]["enabled"] = True
-
-        def worker() -> None:
-            daily_pulse.send_telegram(
-                {"delivery": delivery},
-                f"DailyPulse Telegram 测试发送成功。\n时间: {dt.datetime.now():%Y-%m-%d %H:%M:%S}",
-            )
-
-        self.run_test("Telegram", env_updates, worker)
-
-    def test_webhook(self) -> None:
-        if not self.validate_webhook_fields(require_enabled=True):
-            return
-        delivery, env_updates = self.current_delivery_config()
-        delivery["webhook"]["enabled"] = True
-
-        def worker() -> None:
-            daily_pulse.send_webhook(
-                {"delivery": delivery},
-                f"DailyPulse Webhook 测试发送成功。\n时间: {dt.datetime.now():%Y-%m-%d %H:%M:%S}",
-            )
-
-        self.run_test("Webhook", env_updates, worker)
-
-
-class HistoryWindow(tk.Toplevel):
-    def __init__(self, parent: "DailyPulseApp", files: list[Path]):
-        super().__init__(parent)
-        self.parent_app = parent
-        self.files = files
-        self.title("历史简报")
-        self.geometry("820x520")
-        self.minsize(680, 420)
-        self.configure(bg=BG)
-
-        root = ttk.Frame(self, padding=12)
-        root.pack(fill="both", expand=True)
-        root.columnconfigure(1, weight=1)
-        root.rowconfigure(0, weight=1)
-
-        self.listbox = tk.Listbox(root, width=28, activestyle="dotbox", exportselection=False)
-        self.listbox.grid(row=0, column=0, sticky="ns", padx=(0, 10))
-        for path in files:
-            self.listbox.insert("end", path.stem.replace("daily-pulse-", ""))
-        self.listbox.bind("<<ListboxSelect>>", lambda _event: self.load_selected_preview())
-
-        self.preview = scrolledtext.ScrolledText(
-            root,
-            wrap="word",
-            height=14,
-            background=OUTPUT_BG,
-            foreground=TEXT,
-            padx=12,
-            pady=12,
-            relief="flat",
-            borderwidth=0,
-        )
-        self.preview.grid(row=0, column=1, sticky="nsew")
-
-        buttons = ttk.Frame(root)
-        buttons.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
-        ttk.Button(buttons, text="载入预览", command=self.load_into_app, style="Accent.TButton").grid(row=0, column=0, padx=(0, 8))
-        ttk.Button(buttons, text="关闭", command=self.destroy, style="Secondary.TButton").grid(row=0, column=1)
-
-        if files:
-            self.listbox.selection_set(0)
-            self.load_selected_preview()
-
-    def selected_file(self) -> Path | None:
-        selection = self.listbox.curselection()
-        if not selection:
-            return None
-        return self.files[selection[0]]
-
-    def load_selected_preview(self) -> None:
-        path = self.selected_file()
-        if path is None:
-            return
-        self.preview.delete("1.0", "end")
-        self.preview.insert("1.0", path.read_text(encoding="utf-8"))
-
-    def load_into_app(self) -> None:
-        path = self.selected_file()
-        if path is None:
-            return
-        body = path.read_text(encoding="utf-8")
-        self.parent_app.current_digest = body
-        self.parent_app.set_output(body)
-        self.parent_app.set_status(f"已载入历史简报 {path.name}。")
+        self.env_updates = {k: v.get().strip() for k, v in self._env_vars.items() if v.get().strip()}
         self.destroy()
 
+    def _cancel(self) -> None:
+        self.result = None
+        self.destroy()
 
-class DailyPulseApp(tk.Tk):
+    def _run_test(self, label: str, worker: Callable[[], None]) -> None:
+        try:
+            worker()
+            messagebox.showinfo(label, f"{label} 成功。", parent=self)
+        except Exception as exc:
+            messagebox.showerror(label, f"{label} 失败：{exc}", parent=self)
+
+    def test_email(self) -> None:
+        config = load_config()
+        delivery = self._collect()
+        config["delivery"] = delivery
+        for k, v in self._env_vars.items():
+            os.environ[k] = v.get().strip()
+
+        def worker() -> None:
+            daily_pulse.send_email(config, "DailyPulse 测试邮件", "这是一封测试邮件。")
+
+        self._run_test("邮件测试", worker)
+
+    def test_telegram(self) -> None:
+        config = load_config()
+        delivery = self._collect()
+        config["delivery"] = delivery
+        for k, v in self._env_vars.items():
+            os.environ[k] = v.get().strip()
+
+        def worker() -> None:
+            daily_pulse.send_telegram(config, "DailyPulse 测试消息")
+
+        self._run_test("Telegram 测试", worker)
+
+    def test_webhook(self) -> None:
+        config = load_config()
+        delivery = self._collect()
+        config["delivery"] = delivery
+        for k, v in self._env_vars.items():
+            os.environ[k] = v.get().strip()
+
+        def worker() -> None:
+            daily_pulse.send_webhook(config, "DailyPulse 测试 Webhook")
+
+        self._run_test("Webhook 测试", worker)
+
+
+# ──────────────────────────────────────────────
+#  Main Application
+# ──────────────────────────────────────────────
+
+class DailyPulseApp(ctk.CTk):
+    NAV_ITEMS = ["总览", "信息源", "配置", "发送", "历史"]
+    NAV_ICONS = {"总览": " ", "信息源": " ", "配置": "⚙", "发送": " ", "历史": " "}
+
     def __init__(self) -> None:
         super().__init__()
+
+        # Appearance
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("blue")
+
         self.title("DailyPulse")
-        self.geometry("1120x760")
-        self.minsize(940, 620)
-        self.configure(bg=BG)
+        self.geometry("1100x720")
+        self.minsize(880, 580)
+        self.configure(fg_color=BG)
 
         self.config_data = load_config()
         self.env_data = read_env()
@@ -628,17 +506,12 @@ class DailyPulseApp(tk.Tk):
         self.current_digest = ""
         self.timer_after_id: str | None = None
         self.skipped_version: str | None = None
-        self.app_icon: tk.PhotoImage | None = None
-        self.header_icon: tk.PhotoImage | None = None
         self.source_count_var = tk.StringVar(value="0 个来源")
         self.model_badge_var = tk.StringVar(value="模型未配置")
-        self.sources_expanded_var = tk.BooleanVar(value=False)
-        self.settings_expanded_var = tk.BooleanVar(value=False)
-        self.sources_toggle_var = tk.StringVar(value="展开信息源")
-        self.settings_toggle_var = tk.StringVar(value="展开配置")
+        self.current_nav = tk.StringVar(value=self.NAV_ITEMS[0])
+        self._selected_source_idx: int | None = None
 
         self._load_window_icon()
-        self._configure_style()
         self._build_ui()
         self._load_fields()
         self._refresh_sources()
@@ -646,155 +519,189 @@ class DailyPulseApp(tk.Tk):
         self._poll_worker_queue()
         self.after(1200, self.check_for_updates)
 
+    # ── Icon ──
+
     def _load_window_icon(self) -> None:
         if not APP_ICON_PNG.exists():
             return
         try:
-            self.app_icon = tk.PhotoImage(file=str(APP_ICON_PNG))
-            self.iconphoto(True, self.app_icon)
-            self.header_icon = self.app_icon.subsample(24, 24)
+            self._app_icon = tk.PhotoImage(file=str(APP_ICON_PNG))
+            self.iconphoto(True, self._app_icon)
         except tk.TclError:
-            self.app_icon = None
-            self.header_icon = None
+            pass
 
-    def _configure_style(self) -> None:
-        style = ttk.Style(self)
-        if "clam" in style.theme_names():
-            style.theme_use("clam")
-        style.configure("TFrame", background=BG)
-        style.configure("Surface.TFrame", background=SURFACE)
-        style.configure("Hero.TFrame", background=BG)
-        style.configure("TLabelframe", background=SURFACE, bordercolor=BORDER, relief="solid")
-        style.configure(
-            "TLabelframe.Label",
-            background=SURFACE,
-            foreground=TEXT,
-            font=("TkDefaultFont", 13, "bold"),
-        )
-        style.configure("TLabel", background=BG, foreground=TEXT)
-        style.configure("Surface.TLabel", background=SURFACE, foreground=TEXT)
-        style.configure("Muted.TLabel", background=BG, foreground=MUTED)
-        style.configure("MutedSurface.TLabel", background=SURFACE, foreground=MUTED)
-        style.configure("HeroTitle.TLabel", background=BG, foreground=TEXT, font=("TkDefaultFont", 25, "bold"))
-        style.configure("Badge.TLabel", background=CORAL_SOFT, foreground="#9f3f2d", padding=(10, 5))
-        style.configure("Count.TLabel", background=MINT_SOFT, foreground=TEAL, padding=(10, 5))
-        style.configure("TButton", padding=(12, 7), font=("TkDefaultFont", 11))
-        style.map("TButton", background=[("active", SKY_SOFT)])
-        style.configure("Accent.TButton", background=ACCENT, foreground=SURFACE, font=("TkDefaultFont", 11, "bold"))
-        style.map(
-            "Accent.TButton",
-            background=[("active", ACCENT_DARK), ("pressed", ACCENT_DARK)],
-            foreground=[("active", SURFACE), ("pressed", SURFACE)],
-        )
-        style.configure("Secondary.TButton", background=SURFACE_ALT, foreground=TEXT)
-        style.configure("Status.TLabel", foreground="#38514d", background=STATUS_BG, padding=(12, 8))
-        style.configure(
-            "Treeview",
-            background=SURFACE,
-            fieldbackground=SURFACE,
-            foreground=TEXT,
-            rowheight=32,
-            bordercolor=BORDER,
-            borderwidth=0,
-        )
-        style.configure(
-            "Treeview.Heading",
-            background=SKY_SOFT,
-            foreground="#335061",
-            font=("TkDefaultFont", 11, "bold"),
-            padding=(8, 8),
-        )
-        style.map("Treeview", background=[("selected", MINT_SOFT)], foreground=[("selected", TEXT)])
-        style.configure("TEntry", fieldbackground=SURFACE, foreground=TEXT, padding=6)
-        style.configure("TCombobox", fieldbackground=SURFACE, foreground=TEXT, padding=6)
-        style.configure("TCheckbutton", background=SURFACE, foreground=TEXT)
+    # ── UI Construction ──
 
     def _build_ui(self) -> None:
-        root = ttk.Frame(self, padding=18)
-        root.pack(fill="both", expand=True)
-        root.columnconfigure(0, weight=1)
-        root.rowconfigure(2, weight=1)
+        main = ctk.CTkFrame(self, fg_color=BG)
+        main.pack(fill="both", expand=True)
 
-        header = ttk.Frame(root, style="Hero.TFrame")
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 12))
-        header.columnconfigure(1, weight=1)
-        if self.header_icon:
-            ttk.Label(header, image=self.header_icon, background=BG).grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 12))
-        ttk.Label(header, text="DailyPulse", style="HeroTitle.TLabel").grid(row=0, column=1, sticky="w")
-        ttk.Label(header, text="把信息源整理成一份可发送的 AI 简报", style="Muted.TLabel", font=("TkDefaultFont", 12)).grid(
-            row=1, column=1, sticky="w", pady=(2, 0)
+        self._build_sidebar(main)
+        self._build_content(main)
+
+    def _build_sidebar(self, parent: ctk.CTkFrame) -> None:
+        sidebar = ctk.CTkFrame(parent, fg_color=BG_SIDEBAR, width=200, corner_radius=0)
+        sidebar.pack(side="left", fill="y")
+        sidebar.pack_propagate(False)
+
+        # App header
+        header = ctk.CTkFrame(sidebar, fg_color="transparent")
+        header.pack(fill="x", padx=20, pady=(24, 8))
+        ctk.CTkLabel(header, text=" ", font=ctk.CTkFont(size=20)).pack(side="left")
+        ctk.CTkLabel(header, text="DailyPulse", text_color=TEXT,
+                     font=ctk.CTkFont(size=16, weight="bold")).pack(side="left", padx=(8, 0))
+
+        # Separator
+        ctk.CTkFrame(sidebar, fg_color=BORDER, height=1).pack(fill="x", padx=16, pady=(12, 0))
+
+        # Nav section label
+        ctk.CTkLabel(sidebar, text="导航", text_color=TEXT_MUTED,
+                     font=ctk.CTkFont(size=10)).pack(anchor="w", padx=20, pady=(16, 4))
+
+        # Nav items
+        self._sidebar_buttons: dict[str, ctk.CTkButton] = {}
+        for item in self.NAV_ITEMS:
+            icon = self.NAV_ICONS.get(item, "")
+            is_selected = item == self.current_nav.get()
+            btn = ctk.CTkButton(
+                sidebar,
+                text=f"{icon}  {item}",
+                anchor="w",
+                fg_color=BG_SELECTED if is_selected else "transparent",
+                text_color=TEXT if is_selected else TEXT_MUTED,
+                hover_color="#2d2d36",
+                font=ctk.CTkFont(size=13),
+                height=36,
+                corner_radius=8,
+                command=lambda i=item: self._navigate(i),
+            )
+            btn.pack(fill="x", padx=12, pady=2)
+            self._sidebar_buttons[item] = btn
+
+        # Bottom info
+        bottom = ctk.CTkFrame(sidebar, fg_color="transparent")
+        bottom.pack(side="bottom", fill="x", padx=16, pady=16)
+        ctk.CTkFrame(bottom, fg_color=BORDER, height=1).pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(bottom, textvariable=self.source_count_var, text_color=TEXT_MUTED,
+                     font=ctk.CTkFont(size=11)).pack(anchor="w")
+        ctk.CTkLabel(bottom, textvariable=self.model_badge_var, text_color=TEXT_MUTED,
+                     font=ctk.CTkFont(size=11)).pack(anchor="w", pady=(2, 0))
+
+    def _build_content(self, parent: ctk.CTkFrame) -> None:
+        content = ctk.CTkFrame(parent, fg_color=BG)
+        content.pack(side="left", fill="both", expand=True)
+
+        # Action bar
+        action_bar = ctk.CTkFrame(content, fg_color=BG_CARD, corner_radius=0)
+        action_bar.pack(fill="x")
+        ab = ctk.CTkFrame(action_bar, fg_color="transparent")
+        ab.pack(fill="x", padx=20, pady=10)
+
+        btn_style = dict(height=32, corner_radius=8, font=ctk.CTkFont(size=12, weight="bold"))
+        ctk.CTkButton(ab, text="预览简报", fg_color=ORANGE, hover_color=ORANGE_HOVER,
+                      **btn_style, command=self.preview_digest).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(ab, text="发送", fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                      **btn_style, command=self.send_digest).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(ab, text="保存配置", fg_color=BG_INPUT, hover_color="#44444e",
+                      **btn_style, command=self.save_all).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(ab, text="存文件", fg_color=BG_INPUT, hover_color="#44444e",
+                      **btn_style, command=self.save_digest_file).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(ab, text="定时", fg_color=BG_INPUT, hover_color="#44444e",
+                      **btn_style, command=self.start_timer).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(ab, text="停止", fg_color=BG_INPUT, hover_color="#44444e",
+                      **btn_style, command=self.stop_timer).pack(side="left")
+
+        # Separator
+        ctk.CTkFrame(content, fg_color=BORDER, height=1).pack(fill="x")
+
+        # Panels container
+        self._panels: dict[str, ctk.CTkFrame] = {}
+        self._panels_frame = ctk.CTkFrame(content, fg_color=BG)
+        self._panels_frame.pack(fill="both", expand=True, padx=20, pady=(12, 0))
+
+        self._build_overview_panel()
+        self._build_sources_panel()
+        self._build_settings_panel()
+        self._build_delivery_panel()
+        self._build_history_panel()
+
+        # Status bar
+        self.status_var = tk.StringVar(value="就绪")
+        ctk.CTkFrame(content, fg_color=BORDER, height=1).pack(fill="x", side="bottom")
+        status_bar = ctk.CTkFrame(content, fg_color=BG, corner_radius=0)
+        status_bar.pack(fill="x", side="bottom", padx=20, pady=(4, 8))
+        ctk.CTkLabel(status_bar, textvariable=self.status_var, text_color=TEXT_MUTED,
+                     font=ctk.CTkFont(size=11)).pack(anchor="w")
+
+        self._navigate(self.current_nav.get())
+
+    # ── Panels ──
+
+    def _build_overview_panel(self) -> None:
+        panel = ctk.CTkFrame(self._panels_frame, fg_color=BG)
+        self._panels["总览"] = panel
+
+        ctk.CTkLabel(panel, text="简报预览", text_color=TEXT,
+                     font=ctk.CTkFont(size=18, weight="bold")).pack(anchor="w", pady=(0, 12))
+
+        output_font = "Consolas" if sys.platform.startswith("win") else "Menlo"
+        self.output = ctk.CTkTextbox(
+            panel,
+            font=ctk.CTkFont(family=output_font, size=13),
+            fg_color=BG_CARD,
+            text_color=TEXT,
+            border_color=BORDER,
+            border_width=1,
+            scrollbar_button_color=BORDER,
+            scrollbar_button_hover_color=ACCENT,
         )
-        ttk.Label(header, textvariable=self.source_count_var, style="Count.TLabel").grid(row=0, column=2, sticky="e", padx=(8, 0))
-        ttk.Label(header, textvariable=self.model_badge_var, style="Badge.TLabel").grid(row=0, column=3, sticky="e", padx=(8, 0))
+        self.output.pack(fill="both", expand=True)
 
-        controls_box = ttk.LabelFrame(root, text="控制台", padding=10)
-        controls_box.grid(row=1, column=0, sticky="ew", pady=(0, 12))
-        controls_box.columnconfigure(0, weight=1)
+    def _build_sources_panel(self) -> None:
+        panel = ctk.CTkFrame(self._panels_frame, fg_color=BG)
+        self._panels["信息源"] = panel
 
-        control_bar = ttk.Frame(controls_box, style="Surface.TFrame")
-        control_bar.grid(row=0, column=0, sticky="ew")
-        control_bar.columnconfigure(8, weight=1)
+        hdr = ctk.CTkFrame(panel, fg_color="transparent")
+        hdr.pack(fill="x", pady=(0, 12))
+        ctk.CTkLabel(hdr, text="信息源", text_color=TEXT,
+                     font=ctk.CTkFont(size=18, weight="bold")).pack(side="left")
+        ctk.CTkButton(hdr, text="+ 添加", width=80, fg_color=ACCENT,
+                      hover_color=ACCENT_HOVER,
+                      font=ctk.CTkFont(size=12, weight="bold"),
+                      command=self.add_source).pack(side="right")
 
-        ttk.Button(
-            control_bar,
-            textvariable=self.sources_toggle_var,
-            command=self.toggle_sources_panel,
-            style="Secondary.TButton",
-        ).grid(row=0, column=0, padx=(0, 8))
-        ttk.Button(
-            control_bar,
-            textvariable=self.settings_toggle_var,
-            command=self.toggle_settings_panel,
-            style="Secondary.TButton",
-        ).grid(row=0, column=1, padx=(0, 14))
-        ttk.Button(control_bar, text="保存", command=self.save_all, style="Secondary.TButton").grid(row=0, column=2, padx=(0, 8))
-        ttk.Button(control_bar, text="预览", style="Accent.TButton", command=self.preview_digest).grid(row=0, column=3, padx=(0, 8))
-        ttk.Button(control_bar, text="发送", command=self.send_digest, style="Secondary.TButton").grid(row=0, column=4, padx=(0, 8))
-        ttk.Button(control_bar, text="存文件", command=self.save_digest_file, style="Secondary.TButton").grid(row=0, column=5, padx=(0, 8))
-        ttk.Button(control_bar, text="历史", command=self.open_history, style="Secondary.TButton").grid(row=0, column=6, padx=(0, 8))
-        ttk.Button(control_bar, text="启动定时", command=self.start_timer, style="Secondary.TButton").grid(row=0, column=7, padx=(0, 8))
-        ttk.Button(control_bar, text="停止定时", command=self.stop_timer, style="Secondary.TButton").grid(row=0, column=8, sticky="w")
+        self._source_list_frame = ctk.CTkScrollableFrame(
+            panel, fg_color=BG_CARD, corner_radius=8,
+            border_width=1, border_color=BORDER,
+            scrollbar_button_color=BORDER,
+            scrollbar_button_hover_color=ACCENT,
+        )
+        self._source_list_frame.pack(fill="both", expand=True)
 
-        self.sources_panel = ttk.Frame(controls_box, style="Surface.TFrame")
-        self.sources_panel.grid(row=1, column=0, sticky="ew", pady=(10, 0))
-        self.sources_panel.columnconfigure(0, weight=1)
+        btn_frame = ctk.CTkFrame(panel, fg_color="transparent")
+        btn_frame.pack(fill="x", pady=(8, 0))
+        for text, cmd in [("编辑", self.edit_source), ("删除", self.delete_source),
+                          ("上移", lambda: self.move_source(-1)), ("下移", lambda: self.move_source(1))]:
+            ctk.CTkButton(btn_frame, text=text, width=60, fg_color=BG_INPUT,
+                          hover_color="#44444e", height=30,
+                          font=ctk.CTkFont(size=12),
+                          command=cmd).pack(side="left", padx=(0, 6))
 
-        columns = ("name", "status", "type", "limit", "url")
-        self.source_tree = ttk.Treeview(self.sources_panel, columns=columns, show="headings", selectmode="browse", height=5)
-        self.source_tree.heading("name", text="名称")
-        self.source_tree.heading("status", text="状态")
-        self.source_tree.heading("type", text="类型")
-        self.source_tree.heading("limit", text="条数")
-        self.source_tree.heading("url", text="URL")
-        self.source_tree.column("name", width=150, minwidth=110)
-        self.source_tree.column("status", width=110, minwidth=90, anchor="center")
-        self.source_tree.column("type", width=70, minwidth=60, anchor="center")
-        self.source_tree.column("limit", width=58, minwidth=50, anchor="center")
-        self.source_tree.column("url", width=360, minwidth=240)
-        self.source_tree.grid(row=0, column=0, sticky="ew")
-        self.source_tree.bind("<Double-1>", lambda _event: self.edit_source())
+    def _build_settings_panel(self) -> None:
+        panel = ctk.CTkFrame(self._panels_frame, fg_color=BG)
+        self._panels["配置"] = panel
 
-        source_scroll = ttk.Scrollbar(self.sources_panel, orient="vertical", command=self.source_tree.yview)
-        source_scroll.grid(row=0, column=1, sticky="ns")
-        self.source_tree.configure(yscrollcommand=source_scroll.set)
+        ctk.CTkLabel(panel, text="API 与基本配置", text_color=TEXT,
+                     font=ctk.CTkFont(size=18, weight="bold")).pack(anchor="w", pady=(0, 12))
 
-        source_buttons = ttk.Frame(self.sources_panel, style="Surface.TFrame")
-        source_buttons.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
-        for idx, (text, command) in enumerate(
-            [
-                ("添加", self.add_source),
-                ("编辑", self.edit_source),
-                ("删除", self.delete_source),
-                ("上移", lambda: self.move_source(-1)),
-                ("下移", lambda: self.move_source(1)),
-            ]
-        ):
-            ttk.Button(source_buttons, text=text, command=command, style="Secondary.TButton").grid(row=0, column=idx, padx=(0, 8))
+        card = ctk.CTkFrame(panel, fg_color=BG_CARD, corner_radius=8,
+                            border_width=1, border_color=BORDER)
+        card.pack(fill="both", expand=True)
 
-        self.settings_panel = ttk.Frame(controls_box, style="Surface.TFrame")
-        self.settings_panel.grid(row=2, column=0, sticky="ew", pady=(10, 0))
-        self.settings_panel.columnconfigure(1, weight=1)
-        self.settings_panel.columnconfigure(3, weight=1)
+        form = ctk.CTkFrame(card, fg_color="transparent")
+        form.pack(fill="x", padx=20, pady=16)
+        form.columnconfigure(1, weight=1)
+        form.columnconfigure(3, weight=1)
 
         self.title_var = tk.StringVar()
         self.words_var = tk.StringVar()
@@ -809,97 +716,134 @@ class DailyPulseApp(tk.Tk):
         self.telegram_enabled_var = tk.BooleanVar()
         self.webhook_enabled_var = tk.BooleanVar()
 
-        settings = [
-            ("标题", ttk.Entry(self.settings_panel, textvariable=self.title_var)),
-            ("摘要字数", ttk.Entry(self.settings_panel, textvariable=self.words_var)),
-            (
-                "摘要风格",
-                ttk.Combobox(
-                    self.settings_panel,
-                    textvariable=self.summary_style_var,
-                    values=("标准", "简洁", "深度", "行动"),
-                    state="readonly",
-                ),
-            ),
-            ("总条数上限", ttk.Entry(self.settings_panel, textvariable=self.max_items_var)),
-            ("每日时间", ttk.Entry(self.settings_panel, textvariable=self.schedule_var)),
-            ("AI Endpoint", ttk.Entry(self.settings_panel, textvariable=self.endpoint_var)),
-            ("AI Model", ttk.Entry(self.settings_panel, textvariable=self.model_var)),
-            ("密钥变量名", ttk.Entry(self.settings_panel, textvariable=self.api_key_env_var)),
-            ("API Key", ttk.Entry(self.settings_panel, textvariable=self.api_key_var, show="*")),
+        entry_cfg = dict(fg_color=BG_INPUT, text_color=TEXT, border_color=BORDER, height=32)
+        fields = [
+            ("标题", ctk.CTkEntry(form, textvariable=self.title_var, **entry_cfg)),
+            ("摘要字数", ctk.CTkEntry(form, textvariable=self.words_var, width=100, **entry_cfg)),
+            ("摘要风格", None),
+            ("总条数上限", ctk.CTkEntry(form, textvariable=self.max_items_var, width=100, **entry_cfg)),
+            ("每日时间", ctk.CTkEntry(form, textvariable=self.schedule_var, width=100, **entry_cfg)),
+            ("AI Endpoint", ctk.CTkEntry(form, textvariable=self.endpoint_var, **entry_cfg)),
+            ("AI Model", ctk.CTkEntry(form, textvariable=self.model_var, width=160, **entry_cfg)),
+            ("密钥变量名", ctk.CTkEntry(form, textvariable=self.api_key_env_var, width=160, **entry_cfg)),
+            ("API Key", ctk.CTkEntry(form, textvariable=self.api_key_var, show="*", width=200, **entry_cfg)),
         ]
-        for idx, (label, widget) in enumerate(settings):
+
+        for idx, (label, widget) in enumerate(fields):
             row = idx // 2
             col = (idx % 2) * 2
-            ttk.Label(self.settings_panel, text=label, style="Surface.TLabel").grid(
-                row=row, column=col, sticky="w", padx=(0, 10), pady=5
+            ctk.CTkLabel(form, text=label, text_color=TEXT_DIM,
+                         font=ctk.CTkFont(size=11)).grid(row=row, column=col, sticky="w", padx=(0, 10), pady=10)
+            if label == "摘要风格":
+                ctk.CTkComboBox(
+                    form, variable=self.summary_style_var,
+                    values=["标准", "简洁", "深度", "行动"],
+                    fg_color=BG_INPUT, text_color=TEXT, border_color=BORDER,
+                    button_color=ACCENT, dropdown_fg_color=BG_CARD,
+                    width=120, height=32,
+                ).grid(row=row, column=col + 1, sticky="w", padx=(0, 18), pady=10)
+            else:
+                widget.grid(row=row, column=col + 1, sticky="ew", padx=(0, 18), pady=10)
+
+    def _build_delivery_panel(self) -> None:
+        panel = ctk.CTkFrame(self._panels_frame, fg_color=BG)
+        self._panels["发送"] = panel
+
+        hdr = ctk.CTkFrame(panel, fg_color="transparent")
+        hdr.pack(fill="x", pady=(0, 12))
+        ctk.CTkLabel(hdr, text="发送渠道", text_color=TEXT,
+                     font=ctk.CTkFont(size=18, weight="bold")).pack(side="left")
+        ctk.CTkButton(hdr, text="详细配置...", width=100, fg_color=BG_INPUT,
+                      hover_color="#44444e",
+                      font=ctk.CTkFont(size=12),
+                      command=self.open_delivery_settings).pack(side="right")
+
+        card = ctk.CTkFrame(panel, fg_color=BG_CARD, corner_radius=8,
+                            border_width=1, border_color=BORDER)
+        card.pack(fill="x")
+
+        for icon, label, var, desc in [
+            (" ", "邮件", self.email_enabled_var, "通过 SMTP 发送简报到邮箱"),
+            (" ", "Telegram", self.telegram_enabled_var, "通过 Telegram Bot 推送"),
+            (" ", "Webhook", self.webhook_enabled_var, "企业微信 / 飞书 / 钉钉等"),
+        ]:
+            row = ctk.CTkFrame(card, fg_color="transparent")
+            row.pack(fill="x", padx=16, pady=2)
+
+            inner = ctk.CTkFrame(row, fg_color="transparent")
+            inner.pack(fill="x", pady=8)
+
+            left = ctk.CTkFrame(inner, fg_color="transparent")
+            left.pack(side="left", fill="x", expand=True)
+            ctk.CTkLabel(left, text=f"{icon}  {label}", text_color=TEXT,
+                         font=ctk.CTkFont(size=13, weight="bold"), anchor="w").pack(anchor="w")
+            ctk.CTkLabel(left, text=desc, text_color=TEXT_MUTED,
+                         font=ctk.CTkFont(size=11), anchor="w").pack(anchor="w")
+
+            ctk.CTkSwitch(inner, text="", variable=var, onvalue=True, offvalue=False,
+                          fg_color=BORDER, progress_color=ACCENT,
+                          button_color="#ffffff", button_hover_color="#dddddd",
+                          width=40).pack(side="right")
+
+            # Separator
+            ctk.CTkFrame(card, fg_color=BORDER, height=1).pack(fill="x", padx=16)
+
+    def _build_history_panel(self) -> None:
+        panel = ctk.CTkFrame(self._panels_frame, fg_color=BG)
+        self._panels["历史"] = panel
+
+        hdr = ctk.CTkFrame(panel, fg_color="transparent")
+        hdr.pack(fill="x", pady=(0, 12))
+        ctk.CTkLabel(hdr, text="历史简报", text_color=TEXT,
+                     font=ctk.CTkFont(size=18, weight="bold")).pack(side="left")
+        ctk.CTkButton(hdr, text="刷新", width=60, fg_color=BG_INPUT,
+                      hover_color="#44444e",
+                      font=ctk.CTkFont(size=12),
+                      command=self._refresh_history_list).pack(side="right")
+
+        card = ctk.CTkFrame(panel, fg_color=BG_CARD, corner_radius=8,
+                            border_width=1, border_color=BORDER)
+        card.pack(fill="both", expand=True)
+
+        self.history_listbox = tk.Listbox(
+            card, activestyle="none", exportselection=False,
+            bg=BG_CARD, fg=TEXT, selectbackground=ACCENT, selectforeground="#ffffff",
+            relief="flat", borderwidth=0, highlightthickness=0,
+            font=("Segoe UI", 11),
+        )
+        self.history_listbox.pack(fill="both", expand=True, padx=12, pady=12)
+        self.history_listbox.bind("<Double-1>", lambda _e: self._load_history_selected())
+
+        btn_frame = ctk.CTkFrame(card, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=12, pady=(0, 12))
+        ctk.CTkButton(btn_frame, text="载入", width=70, fg_color=ACCENT,
+                      hover_color=ACCENT_HOVER,
+                      command=self._load_history_selected).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(btn_frame, text="删除", width=70, fg_color="#dc2626",
+                      hover_color="#ef4444",
+                      command=self._delete_history_selected).pack(side="left")
+
+    # ── Navigation ──
+
+    def _navigate(self, name: str) -> None:
+        self.current_nav.set(name)
+        for item_name, btn in self._sidebar_buttons.items():
+            is_active = item_name == name
+            btn.configure(
+                fg_color=BG_SELECTED if is_active else "transparent",
+                text_color=TEXT if is_active else TEXT_MUTED,
             )
-            widget.grid(row=row, column=col + 1, sticky="ew", padx=(0, 18), pady=5)
+        for panel_name, panel in self._panels.items():
+            if panel_name == name:
+                panel.pack(fill="both", expand=True)
+            else:
+                panel.pack_forget()
+        if name == "信息源":
+            self._refresh_sources()
+        if name == "历史":
+            self._refresh_history_list()
 
-        delivery_row_index = (len(settings) + 1) // 2
-        ttk.Label(self.settings_panel, text="发送渠道", style="Surface.TLabel").grid(
-            row=delivery_row_index, column=0, sticky="w", padx=(0, 10), pady=(12, 5)
-        )
-        delivery_row = ttk.Frame(self.settings_panel, style="Surface.TFrame")
-        delivery_row.grid(row=delivery_row_index, column=1, columnspan=3, sticky="w", pady=(12, 5))
-        ttk.Checkbutton(delivery_row, text="邮件", variable=self.email_enabled_var).grid(row=0, column=0, padx=(0, 12))
-        ttk.Checkbutton(delivery_row, text="Telegram", variable=self.telegram_enabled_var).grid(row=0, column=1, padx=(0, 12))
-        ttk.Checkbutton(delivery_row, text="Webhook", variable=self.webhook_enabled_var).grid(row=0, column=2, padx=(0, 12))
-        ttk.Button(delivery_row, text="配置...", command=self.open_delivery_settings, style="Secondary.TButton").grid(
-            row=0, column=3
-        )
-
-        output_box = ttk.LabelFrame(root, text="简报预览", padding=10)
-        output_box.grid(row=2, column=0, sticky="nsew")
-        output_box.rowconfigure(0, weight=1)
-        output_box.columnconfigure(0, weight=1)
-
-        output_font = "Consolas" if sys.platform.startswith("win") else "Menlo"
-        self.output = scrolledtext.ScrolledText(
-            output_box,
-            wrap="word",
-            font=(output_font, 12),
-            height=12,
-            borderwidth=0,
-            relief="flat",
-            background=OUTPUT_BG,
-            foreground=TEXT,
-            insertbackground=ACCENT,
-            padx=12,
-            pady=12,
-        )
-        self.output.grid(row=0, column=0, sticky="nsew")
-
-        self.status_var = tk.StringVar(value="就绪")
-        self.status = ttk.Label(root, textvariable=self.status_var, style="Status.TLabel")
-        self.status.grid(row=3, column=0, sticky="ew", pady=(10, 0))
-        self.apply_panel_visibility()
-
-    def update_toggle_labels(self) -> None:
-        source_marker = "-" if self.sources_expanded_var.get() else "+"
-        settings_marker = "-" if self.settings_expanded_var.get() else "+"
-        self.sources_toggle_var.set(f"{source_marker} 信息源 ({len(self.sources)})")
-        self.settings_toggle_var.set(f"{settings_marker} 配置")
-
-    def apply_panel_visibility(self) -> None:
-        if self.sources_expanded_var.get():
-            self.sources_panel.grid()
-        else:
-            self.sources_panel.grid_remove()
-
-        if self.settings_expanded_var.get():
-            self.settings_panel.grid()
-        else:
-            self.settings_panel.grid_remove()
-        self.update_toggle_labels()
-
-    def toggle_sources_panel(self) -> None:
-        self.sources_expanded_var.set(not self.sources_expanded_var.get())
-        self.apply_panel_visibility()
-
-    def toggle_settings_panel(self) -> None:
-        self.settings_expanded_var.set(not self.settings_expanded_var.get())
-        self.apply_panel_visibility()
+    # ── Fields & Sources ──
 
     def _load_fields(self) -> None:
         ai = self.config_data.get("ai", {})
@@ -914,7 +858,7 @@ class DailyPulseApp(tk.Tk):
         self.schedule_var.set(self.config_data.get("schedule", {}).get("time", "08:00"))
         self.endpoint_var.set(ai.get("endpoint", "https://api.deepseek.com/chat/completions"))
         self.model_var.set(ai.get("model", "deepseek-v4-flash"))
-        self.model_badge_var.set(f"模型 {self.model_var.get() or '未配置'}")
+        self.model_badge_var.set(f"  {self.model_var.get() or '未配置'}")
         self.api_key_env_var.set(key_name)
         self.api_key_var.set(self.env_data.get(key_name, os.getenv(key_name, "")))
         self.email_enabled_var.set(bool(delivery.get("email", {}).get("enabled", False)))
@@ -922,23 +866,57 @@ class DailyPulseApp(tk.Tk):
         self.webhook_enabled_var.set(bool(delivery.get("webhook", {}).get("enabled", False)))
 
     def _refresh_sources(self) -> None:
-        for item_id in self.source_tree.get_children():
-            self.source_tree.delete(item_id)
-        for source in self.sources:
+        for widget in self._source_list_frame.winfo_children():
+            widget.destroy()
+
+        if not self.sources:
+            ctk.CTkLabel(self._source_list_frame, text="暂无信息源，点击上方 + 添加。",
+                         text_color=TEXT_MUTED, font=ctk.CTkFont(size=12)).pack(pady=32)
+            self.source_count_var.set("0 个来源")
+            return
+
+        for idx, source in enumerate(self.sources):
             key = self.source_key(source)
-            self.source_tree.insert(
-                "",
-                "end",
-                values=(
-                    source.get("name", ""),
-                    self.source_health.get(key, "未检查"),
-                    source.get("type", "rss"),
-                    source.get("limit", 5),
-                    source.get("url", ""),
-                ),
-            )
+            health = self.source_health.get(key, "")
+            src_type = source.get("type", "rss").upper()
+            subtitle = f"{src_type} · {source.get('url', '')}"
+            if health:
+                subtitle += f"  ({health})"
+
+            row = ctk.CTkFrame(self._source_list_frame, fg_color="transparent", cursor="hand2")
+            row.pack(fill="x", padx=4, pady=2)
+
+            inner = ctk.CTkFrame(row, fg_color="transparent")
+            inner.pack(fill="x", pady=6)
+
+            # Number badge
+            ctk.CTkLabel(inner, text=f" {idx + 1}", text_color=TEXT_MUTED,
+                         font=ctk.CTkFont(size=14), width=36).pack(side="left")
+
+            # Text
+            text_frame = ctk.CTkFrame(inner, fg_color="transparent")
+            text_frame.pack(side="left", fill="x", expand=True)
+            ctk.CTkLabel(text_frame, text=source.get("name", ""), text_color=TEXT,
+                         font=ctk.CTkFont(size=12, weight="bold"), anchor="w").pack(anchor="w")
+            ctk.CTkLabel(text_frame, text=subtitle, text_color=TEXT_MUTED,
+                         font=ctk.CTkFont(size=10), anchor="w").pack(anchor="w")
+
+            # Click handler
+            def _make_click(i=idx):
+                def _handler(_e=None):
+                    self._select_source(i)
+                return _handler
+
+            for w in [row, inner, text_frame] + list(inner.winfo_children()) + list(text_frame.winfo_children()):
+                w.bind("<Button-1>", _make_click(idx))
+
+            # Separator
+            ctk.CTkFrame(self._source_list_frame, fg_color=BORDER, height=1).pack(fill="x", padx=12)
+
         self.source_count_var.set(f"{len(self.sources)} 个来源")
-        self.update_toggle_labels()
+
+    def _select_source(self, index: int) -> None:
+        self._selected_source_idx = index
 
     def source_key(self, source: dict[str, Any]) -> tuple[str, str]:
         return (source.get("name", ""), source.get("url", ""))
@@ -948,13 +926,11 @@ class DailyPulseApp(tk.Tk):
         self._refresh_sources()
 
     def selected_source_index(self) -> int | None:
-        selection = self.source_tree.selection()
-        if not selection:
-            return None
-        return self.source_tree.index(selection[0])
+        return getattr(self, "_selected_source_idx", None)
 
     def add_source(self) -> None:
         dialog = SourceDialog(self, "添加信息源")
+        self.wait_window(dialog)
         if dialog.result:
             self.sources.append(dialog.result)
             self._refresh_sources()
@@ -963,9 +939,10 @@ class DailyPulseApp(tk.Tk):
     def edit_source(self) -> None:
         index = self.selected_source_index()
         if index is None:
-            messagebox.showinfo("请选择信息源", "先在左侧列表里选择一个信息源。", parent=self)
+            messagebox.showinfo("请选择信息源", "先在列表里选择一个信息源。", parent=self)
             return
         dialog = SourceDialog(self, "编辑信息源", self.sources[index])
+        self.wait_window(dialog)
         if dialog.result:
             self.sources[index] = dialog.result
             self._refresh_sources()
@@ -974,7 +951,7 @@ class DailyPulseApp(tk.Tk):
     def delete_source(self) -> None:
         index = self.selected_source_index()
         if index is None:
-            messagebox.showinfo("请选择信息源", "先在左侧列表里选择一个信息源。", parent=self)
+            messagebox.showinfo("请选择信息源", "先在列表里选择一个信息源。", parent=self)
             return
         source = self.sources[index]
         if not messagebox.askyesno("删除信息源", f"确定删除「{source.get('name', '')}」吗？", parent=self):
@@ -991,10 +968,8 @@ class DailyPulseApp(tk.Tk):
         if new_index < 0 or new_index >= len(self.sources):
             return
         self.sources[index], self.sources[new_index] = self.sources[new_index], self.sources[index]
+        self._selected_source_idx = new_index
         self._refresh_sources()
-        item_id = self.source_tree.get_children()[new_index]
-        self.source_tree.selection_set(item_id)
-        self.source_tree.focus(item_id)
 
     def build_config_from_fields(self) -> dict[str, Any]:
         config = dict(self.config_data)
@@ -1034,6 +1009,7 @@ class DailyPulseApp(tk.Tk):
             messagebox.showerror("配置不正确", f"请检查数字字段：{exc}", parent=self)
             return
         dialog = DeliveryDialog(self, "发送渠道配置", config.get("delivery", {}), self.env_data | self.pending_env_updates)
+        self.wait_window(dialog)
         if dialog.result is None:
             return
         self.config_data = dict(self.config_data)
@@ -1062,7 +1038,7 @@ class DailyPulseApp(tk.Tk):
         self.pending_env_updates.clear()
         self.config_data = config
         self.env_data = read_env()
-        self.model_badge_var.set(f"模型 {config.get('ai', {}).get('model', '未配置')}")
+        self.model_badge_var.set(f"  {config.get('ai', {}).get('model', '未配置')}")
         if self.timer_after_id:
             self.schedule_next_run()
         self.set_status(f"已保存 {CONFIG_PATH.name} 和 {ENV_PATH.name}。")
@@ -1078,12 +1054,14 @@ class DailyPulseApp(tk.Tk):
 
     def show_initial_empty_state(self) -> None:
         if self.sources:
-            self.set_output("暂无简报。点击“预览”生成今天的 DailyPulse。\n")
+            self.set_output("暂无简报。点击「预览简报」生成今天的 DailyPulse。\n")
             return
         self.set_output(
             "欢迎使用 DailyPulse。\n\n"
-            "先展开“信息源”添加 RSS 或网页来源，再点击“预览”生成第一份简报。\n"
+            "先在「信息源」中添加 RSS 或网页来源，再点击「预览简报」生成第一份简报。\n"
         )
+
+    # ── Background workers ──
 
     def run_background(self, label: str, worker: Callable[[], Any]) -> None:
         self.set_status(label)
@@ -1113,12 +1091,14 @@ class DailyPulseApp(tk.Tk):
                 self.update_source_health(payload[2])
                 self.save_history_entry(payload[1])
                 self.set_status("简报已生成并保存到历史。")
+                self._navigate("总览")
             elif isinstance(payload, tuple) and payload[0] == "sent":
                 self.current_digest = payload[1]
                 self.set_output(payload[1])
                 self.update_source_health(payload[2])
                 self.save_history_entry(payload[1])
                 self.set_status("简报已发送并保存到历史。")
+                self._navigate("总览")
             elif isinstance(payload, str):
                 self.current_digest = payload
                 self.set_output(payload)
@@ -1128,6 +1108,8 @@ class DailyPulseApp(tk.Tk):
             self.set_status("运行失败。")
             messagebox.showerror("运行失败", str(payload), parent=self)
         self.after(0, self._poll_worker_queue)
+
+    # ── Update checking ──
 
     def check_for_updates(self) -> None:
         def worker() -> None:
@@ -1157,6 +1139,8 @@ class DailyPulseApp(tk.Tk):
         elif result is False:
             self.skipped_version = latest
             self.set_status(f"已跳过版本 {latest}。")
+
+    # ── Digest generation ──
 
     def health_key_from_result(self, result: daily_pulse.SourceFetchResult) -> tuple[str, str]:
         return (result.source.name, result.source.url)
@@ -1217,7 +1201,7 @@ class DailyPulseApp(tk.Tk):
     def save_digest_file(self) -> None:
         body = self.output.get("1.0", "end").strip()
         if not body:
-            messagebox.showinfo("没有内容", "先点“预览简报”生成内容。", parent=self)
+            messagebox.showinfo("没有内容", "先点「预览简报」生成内容。", parent=self)
             return
         default_name = f"daily-pulse-{dt.datetime.now():%Y-%m-%d}.txt"
         path = filedialog.asksaveasfilename(
@@ -1230,6 +1214,8 @@ class DailyPulseApp(tk.Tk):
         if path:
             Path(path).write_text(body + "\n", encoding="utf-8")
             self.set_status(f"已保存到 {path}")
+
+    # ── History ──
 
     MAX_HISTORY_FILES = 90
 
@@ -1253,12 +1239,44 @@ class DailyPulseApp(tk.Tk):
             return []
         return sorted(HISTORY_DIR.glob("daily-pulse-*.txt"), reverse=True)
 
-    def open_history(self) -> None:
+    def _refresh_history_list(self) -> None:
+        self.history_listbox.delete(0, "end")
+        for path in self.history_files():
+            self.history_listbox.insert("end", path.stem.replace("daily-pulse-", ""))
+
+    def _selected_history_file(self) -> Path | None:
+        sel = self.history_listbox.curselection()
+        if not sel:
+            return None
         files = self.history_files()
-        if not files:
-            messagebox.showinfo("暂无历史", "生成简报后会自动保存在历史里。", parent=self)
+        idx = sel[0]
+        return files[idx] if idx < len(files) else None
+
+    def _load_history_selected(self) -> None:
+        path = self._selected_history_file()
+        if path is None:
+            messagebox.showinfo("请选择", "先在列表里选择一份历史简报。", parent=self)
             return
-        HistoryWindow(self, files)
+        body = path.read_text(encoding="utf-8")
+        self.current_digest = body
+        self.set_output(body)
+        self.set_status(f"已载入历史简报 {path.name}。")
+        self._navigate("总览")
+
+    def _delete_history_selected(self) -> None:
+        path = self._selected_history_file()
+        if path is None:
+            return
+        if not messagebox.askyesno("删除", f"确定删除 {path.name} 吗？", parent=self):
+            return
+        path.unlink(missing_ok=True)
+        self._refresh_history_list()
+        self.set_status(f"已删除 {path.name}。")
+
+    def open_history(self) -> None:
+        self._navigate("历史")
+
+    # ── Timer ──
 
     def start_timer(self) -> None:
         self.stop_timer(silent=True)
@@ -1300,4 +1318,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

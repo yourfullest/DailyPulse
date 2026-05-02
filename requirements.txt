@@ -1,1 +1,2 @@
 certifi>=2024.8.30
+customtkinter>=5.2.0

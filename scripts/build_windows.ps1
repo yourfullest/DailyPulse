@@ -4,7 +4,7 @@ $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
 
 python -m pip install --upgrade pip
-python -m pip install pyinstaller certifi
+python -m pip install pyinstaller certifi customtkinter
 
 if (Test-Path build) { Remove-Item build -Recurse -Force }
 if (Test-Path dist) { Remove-Item dist -Recurse -Force }
